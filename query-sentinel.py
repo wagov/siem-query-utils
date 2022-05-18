@@ -1,24 +1,27 @@
 #!/usr/bin/env python3
 from subprocess import run, check_output
 from collections import namedtuple
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import sys, json, time
+import sys, json, time, os
 
+max_workers = os.environ.get("MAX_WORKERS", 32)
 
 def azcli(cmd, subscription=None):
     # Run a general azure cli cmd
     if subscription:
-        run(f"az account set --subscription '{subscription}'", shell=True)
+        cmd = f"{cmd} --subscription '{subscription}'"
     result = check_output(f"az {cmd} --only-show-errors -o json", shell=True)
     if not result:
         return None
     return json.loads(result)
 
 def analyticsQuery(query, workspace, subscription=None):
+    cmd = ["az", "monitor", "log-analytics", "query", "--workspace", workspace, "--analytics-query", query]
     # Run a log analytics query given a workspace (customerId) and subscription
     if subscription:
-        run(f"az account set --subscription '{subscription}'", shell=True)
-    result = check_output(["az", "monitor", "log-analytics", "query", "--workspace", workspace, "--analytics-query", query])
+        cmd = cmd + ["--subscription", subscription]
+    result = check_output(cmd)
     if not result:
         return None
     return json.loads(result)
@@ -31,27 +34,32 @@ def listWorkspaces():
     cache = p / "workspaces.json"
     cachetime = 60 * 60 # 1hr
     if cache.exists() and cache.stat().st_mtime > time.time() - cachetime:
-        return json.load(cache.open())
-    else:
+        return [Workspace(*w) for w in json.load(cache.open())]
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
         subscriptions = azcli("account list --query '[].id'")
-        workspaces = []
-        for subscription in subscriptions:
-            logAnalyticsWorkspaces = azcli("monitor log-analytics workspace list --query '[].[customerId,resourceGroup,name]'", subscription)
+        workspaces, wstables, testqueries = [], [], []
+        wsquery = "monitor log-analytics workspace list --query '[].[customerId,resourceGroup,name]'"
+        subscriptions = [(s, executor.submit(azcli, wsquery, s)) for s in subscriptions]
+        for subscription, future in subscriptions:
+            logAnalyticsWorkspaces = future.result()
             for customerId, resourceGroup, name in logAnalyticsWorkspaces:
-                print(len(workspaces), end=".", flush=True)
-                try:
-                    tables = azcli(f"monitor log-analytics workspace table list -g {resourceGroup} --workspace-name {name} --query '[].name'")
-                except:
-                    continue
-                if "SecurityIncident" in tables:
-                    try:
-                        analyticsQuery('SecurityIncident | take 1', customerId, subscription)
-                        workspaces.append(Workspace(subscription, customerId, resourceGroup, name))
-                    except Exception as e:
-                        print(f"Skipping {resourceGroup}/{name}")
-                    break
-        json.dump(workspaces, cache.open("w"))
-        return workspaces
+                workspace = Workspace(subscription, customerId, resourceGroup, name)
+                wstables.append((workspace, executor.submit(azcli, f"monitor log-analytics workspace table list -g {resourceGroup} --workspace-name {name} --query '[].name'", subscription)))
+        for workspace, future in wstables:
+            try:
+                tablenames = future.result()
+            except Exception as e:
+                continue
+            if "SecurityIncident" in tablenames:
+                testqueries.append((workspace, executor.submit(analyticsQuery, 'SecurityIncident | take 1', workspace.customerId, workspace.subscription)))
+        for workspace, future in testqueries:
+            try:
+                future.result()
+                workspaces.append(workspace)
+            except Exception as e:
+                print(f"Skipping {workspace} error {e}")
+    json.dump(workspaces, cache.open("w"))
+    return workspaces
 
 def simpleQuery(query, name):
     # Find first workspace matching name, then run a kusto query against it
@@ -62,12 +70,11 @@ def simpleQuery(query, name):
 
 def globalQuery(query):
     # Run query against all workspaces
-    # TODO: use multiprocessing to make snappy
-    results = []
-    for workspace in listWorkspaces():
-        workspace = Workspace(*workspace)
-        results += analyticsQuery(query, workspace.customerId, workspace.subscription)
-    return results
+    futures = []
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [executor.submit(analyticsQuery, query, w.customerId, w.subscription) for w in listWorkspaces()]
+    # unwrap nested results (each query returns a json fragment)
+    return [result for future in futures for result in future.result()]
 
 actions = {
     "listWorkspaces": listWorkspaces,
@@ -83,4 +90,4 @@ if __name__ == "__main__":
         print(actions[actionName](*args))
     else:
         print(f"Run an action from {actions.keys()}")
-        print(f"Example: {sys.argv[0]} {actions.keys()[0]}")
+        print(f"Example: {sys.argv[0]} {list(actions.keys())[0]}")
