@@ -85,6 +85,12 @@ actions = {
     "simpleQuery": simpleQuery
 }
 
+# Check and login to azure with --identity if not authed yet
+try:
+    azcli("account show")
+except Exception as e:
+    azcli("login --identity")
+
 if __name__ == "__main__":
     if len(sys.argv) > 1:
         actionName = sys.argv[1]
