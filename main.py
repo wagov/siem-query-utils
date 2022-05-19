@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from typing import Union
+from fastapi import FastAPI, HTTPException
 from subprocess import run, check_output
 from collections import namedtuple
 from concurrent.futures import ThreadPoolExecutor
@@ -6,6 +8,7 @@ from pathlib import Path
 import sys, json, time, os
 
 max_workers = os.environ.get("MAX_WORKERS", 32)
+secret_api_token = os.environ["API_TOKEN"]
 
 def azcli(cmd, subscription=None):
     # Run a general azure cli cmd
@@ -91,3 +94,12 @@ if __name__ == "__main__":
     else:
         print(f"Run an action from {actions.keys()}")
         print(f"Example: {sys.argv[0]} {list(actions.keys())[0]}")
+
+app = FastAPI()
+
+@app.get("/{actionName}")
+def get_action(actionName: str, auth_token: str, args: Union[str, None] = None):
+    if secret_api_token != auth_token:
+        raise HTTPException(status_code=403, detail="Invalid auth_token") 
+    args = json.loads(args)
+    return actions[actionName](*args)
