@@ -10,6 +10,6 @@ RUN curl -JLO "https://dl.filippo.io/mkcert/latest?for=linux/amd64" && \
     chmod +x mkcert-v*-linux-amd64 && mv mkcert-v*-linux-amd64 /usr/local/bin/mkcert
 RUN mkcert -install && mkcert selfsigned
 
-EXPOSE 8000
+EXPOSE 443
 
-CMD ["uvicorn", "--host", "0.0.0.0", "main:app", "--ssl-keyfile=./selfsigned-key.pem", "--ssl-certfile=./selfsigned.pem"]
+CMD ["uvicorn", "--host", "0.0.0.0", "--port", "443", "main:app", "--ssl-keyfile=./selfsigned-key.pem", "--ssl-certfile=./selfsigned.pem"]
