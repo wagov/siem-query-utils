@@ -3,12 +3,12 @@ FROM mcr.microsoft.com/azure-cli:2.36.0
 MAINTAINER cybersecurity@dpc.wa.gov.au
 LABEL org.opencontainers.image.source https://github.com/wagov/siem-query-utils
 
-COPY . /app
 WORKDIR /app
+RUN az extension add -n log-analytics -y
+RUN openssl req -x509 -nodes -newkey rsa:4096 -keyout selfsigned-key.pem -out selfsigned.pem -sha256 -days 3650 -subj '/CN=localhost'
+COPY requirements.txt requirements.txt
 RUN pip3 install -r requirements.txt
-RUN curl -JLO "https://dl.filippo.io/mkcert/latest?for=linux/amd64" && \
-    chmod +x mkcert-v*-linux-amd64 && mv mkcert-v*-linux-amd64 /usr/local/bin/mkcert
-RUN mkcert -install && mkcert selfsigned
+COPY . ./
 
 EXPOSE 443
 

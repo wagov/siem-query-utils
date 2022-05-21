@@ -5,21 +5,36 @@ import sys
 import time
 from collections import namedtuple
 from concurrent.futures import ThreadPoolExecutor
+from fire import Fire
 from functools import lru_cache, wraps
 from pathlib import Path
 from subprocess import check_output
 from typing import Union
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Response, Request
 
 secret_api_token = os.environ["API_TOKEN"]
-app = FastAPI()
+app = FastAPI(title="SIEM Query Utils")
+
+
+@app.middleware("http")
+async def authenticate_request(request: Request, call_next):
+    # Middleware to do a simple check of api token vs secure env var
+    auth_token = request.query_params.get("auth_token", request.cookies.get("auth_token"))
+    if auth_token not in [secret_api_token]:
+        response = Response(content="Invalid auth_token", status_code=403, media_type="text/plain")
+    else:
+        response = await call_next(request)
+        if request.cookies.get("auth_token") != auth_token:
+            response.set_cookie("auth_token", auth_token)  # persist auth in a cookie
+    return response
+
 
 def cache(maxsize=2000, typed=False, ttl=300):
     """Least-recently used cache with time-to-live (ttl) limit."""
 
     class Result:
-        __slots__ = ('value', 'death')
+        __slots__ = ("value", "death")
 
         def __init__(self, value, death):
             self.value = value
@@ -45,18 +60,29 @@ def cache(maxsize=2000, typed=False, ttl=300):
 
     return decorator
 
+
 @cache()
 def azcli(*cmd):
-    # Run a general azure cli cmd
+    "Run a general azure cli cmd"
     result = check_output(["az"] + list(cmd) + ["--only-show-errors", "-o", "json"])
     if not result:
         return None
     return json.loads(result)
 
-def analyticsQuery(workspaces, query, timespan="P7D"):
-    # workspaces must be a list of customerIds
+
+try:
+    azcli("account", "show")
+except:
+    try:
+        azcli("login", "--identity")
+    except Exception as e:
+        print(e)
+
+
+def analytics_query(workspaces: list, query: str, timespan: str = "P7D"):
+    "Queries a list of workspaces using kusto"
     chunkSize = 30
-    chunks = [sorted(workspaces)[x:x+chunkSize] for x in range(0, len(workspaces), chunkSize)]
+    chunks = [sorted(workspaces)[x : x + chunkSize] for x in range(0, len(workspaces), chunkSize)]
     results, output = [], []
     with ThreadPoolExecutor() as executor:
         for chunk in chunks:
@@ -71,11 +97,14 @@ def analyticsQuery(workspaces, query, timespan="P7D"):
             print(e)
     return output
 
+
 Workspace = namedtuple("Workspace", ["subscription", "customerId", "resourceGroup", "name"])
 
-@cache(ttl=24*60*60) # cache workspaces for 1 day
-def listWorkspaces():
-    # Get all workspaces as a list of named tuples
+
+@app.get("/listWorkspaces")
+@cache(ttl=24 * 60 * 60)  # cache workspaces for 1 day
+def list_workspaces():
+    "Get all workspaces as a list of named tuples"
     with ThreadPoolExecutor() as executor:
         subscriptions = azcli("account", "list", "--query", "[].id")
         wsquery = ["monitor", "log-analytics", "workspace", "list", "--query", "[].[customerId,resourceGroup,name]"]
@@ -85,48 +114,24 @@ def listWorkspaces():
         for customerId, resourceGroup, name in future.result():
             workspaces.add(Workspace(subscription, customerId, resourceGroup, name))
     # cross check workspaces to make sure they have SecurityIncident tables
-    validated = analyticsQuery([ws.customerId for ws in workspaces], "SecurityIncident | distinct TenantId")
+    validated = analytics_query([ws.customerId for ws in workspaces], "SecurityIncident | distinct TenantId")
     validated = [item["TenantId"] for item in validated]
     return [ws for ws in workspaces if ws.customerId in validated]
 
-def simpleQuery(query, name):
-    # Find first workspace matching name, then run a kusto query against it
-    for workspace in listWorkspaces():
+
+@app.get("/simpleQuery")
+def simple_query(query: str, name: str, timespan: str = "P7D"):
+    "Find first workspace matching name, then run a kusto query against it"
+    for workspace in list_workspaces():
         if str(workspace).find(name):
-            return analyticsQuery([workspace.customerId], query)
+            return analytics_query([workspace.customerId], query, timespan)
 
-def globalQuery(query):
-    return analyticsQuery([ws.customerId for ws in listWorkspaces()], query)
 
-actions = {
-    "listWorkspaces": listWorkspaces,
-    "globalQuery": globalQuery,
-    "simpleQuery": simpleQuery
-}
+@app.get("/globalQuery")
+def global_query(query: str, timespan: str = "P7D"):
+    "Query all workspaces with SecurityIncident tables using kusto"
+    return analytics_query([ws.customerId for ws in list_workspaces()], query, timespan)
 
-# Check and login to azure with --identity if not authed yet
-azcli("config", "set", "extension.use_dynamic_install=yes_without_prompt")
-try:
-    azcli("account", "show")
-except Exception as e:
-    azcli("login", "--identity")
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        actionName = sys.argv[1]
-        args = sys.argv[2:]
-        print(actions[actionName](*args))
-    else:
-        print(f"Run an action from {actions.keys()}")
-        print(f"Example: {sys.argv[0]} {list(actions.keys())[0]}")
-
-
-@app.get("/{actionName}")
-def get_action(actionName: str, auth_token: str, args: Union[str, None] = None):
-    if secret_api_token != auth_token:
-        raise HTTPException(status_code=403, detail="Invalid auth_token")
-    if args:
-        args = json.loads(args)
-    else:
-        args = []
-    return actions[actionName](*args)
+    Fire({"listWorkspaces": list_workspaces, "simpleQuery": simple_query, "globalQuery": global_query})
