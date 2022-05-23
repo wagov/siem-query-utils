@@ -4,14 +4,16 @@ import os
 import sys
 import time
 from collections import namedtuple
+from datetime import timedelta, datetime
 from concurrent.futures import ThreadPoolExecutor
 from fire import Fire
-from functools import lru_cache, wraps
 from pathlib import Path
 from subprocess import check_output
 from typing import Union
 
 from fastapi import FastAPI, Response, Request
+
+from models import Workspace, cache
 
 secret_api_token = os.environ["API_TOKEN"]
 app = FastAPI(title="SIEM Query Utils")
@@ -28,37 +30,6 @@ async def authenticate_request(request: Request, call_next):
         if request.cookies.get("auth_token") != auth_token:
             response.set_cookie("auth_token", auth_token)  # persist auth in a cookie
     return response
-
-
-def cache(maxsize=2000, typed=False, ttl=300):
-    """Least-recently used cache with time-to-live (ttl) limit."""
-
-    class Result:
-        __slots__ = ("value", "death")
-
-        def __init__(self, value, death):
-            self.value = value
-            self.death = death
-
-    def decorator(func):
-        @lru_cache(maxsize=maxsize, typed=typed)
-        def cached_func(*args, **kwargs):
-            value = func(*args, **kwargs)
-            death = time.monotonic() + ttl
-            return Result(value, death)
-
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            result = cached_func(*args, **kwargs)
-            if result.death < time.monotonic():
-                result.value = func(*args, **kwargs)
-                result.death = time.monotonic() + ttl
-            return result.value
-
-        wrapper.cache_clear = cached_func.cache_clear
-        return wrapper
-
-    return decorator
 
 
 @cache()
@@ -98,25 +69,24 @@ def analytics_query(workspaces: list, query: str, timespan: str = "P7D"):
     return output
 
 
-Workspace = namedtuple("Workspace", ["subscription", "customerId", "resourceGroup", "name"])
-
-
 @app.get("/listWorkspaces")
-@cache(ttl=24 * 60 * 60)  # cache workspaces for 1 day
-def list_workspaces():
-    "Get all workspaces as a list of named tuples"
-    with ThreadPoolExecutor() as executor:
-        subscriptions = azcli("account", "list", "--query", "[].id")
-        wsquery = ["monitor", "log-analytics", "workspace", "list", "--query", "[].[customerId,resourceGroup,name]"]
-        subscriptions = [(s, executor.submit(azcli, *list(wsquery + ["--subscription", s]))) for s in subscriptions]
-    workspaces = set()
-    for subscription, future in subscriptions:
-        for customerId, resourceGroup, name in future.result():
-            workspaces.add(Workspace(subscription, customerId, resourceGroup, name))
-    # cross check workspaces to make sure they have SecurityIncident tables
-    validated = analytics_query([ws.customerId for ws in workspaces], "SecurityIncident | distinct TenantId")
-    validated = [item["TenantId"] for item in validated]
-    return [ws for ws in workspaces if ws.customerId in validated]
+def list_workspaces(lastseen: int = 24):
+    "Get workspaces seen in lastseen hrs as a list of named tuples"
+    lastseen = datetime.now() - timedelta(hours=lastseen)
+    if not Workspace.select(Workspace.seen >= lastseen).exists():
+        with ThreadPoolExecutor() as executor:
+            subscriptions = azcli("account", "list", "--query", "[].id")
+            wsquery = ["monitor", "log-analytics", "workspace", "list", "--query", "[].[customerId,resourceGroup,name]"]
+            subscriptions = [(s, executor.submit(azcli, *list(wsquery + ["--subscription", s]))) for s in subscriptions]
+        for subscription, future in subscriptions:
+            for customerId, resourceGroup, name in future.result():
+                Workspace.create(subscription=subscription, customerId=customerId, resourceGroup=resourceGroup, name=name)
+        # cross check workspaces to make sure they have SecurityIncident tables
+        validated = analytics_query([ws[0] for ws in Workspace.select(Workspace.customerId).tuples()], "SecurityIncident | distinct TenantId")
+        validated = frozenset([item["TenantId"] for item in validated])
+        Workspace.delete().where(Workspace.customerId.not_in(validated)).execute()
+        Workspace.delete().where(Workspace.seen < lastseen).execute()
+    return list(Workspace.select().where(Workspace.seen >= lastseen).namedtuples())
 
 
 @app.get("/simpleQuery")
