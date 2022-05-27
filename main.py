@@ -16,7 +16,7 @@ from fastapi import FastAPI, Response, Request
 
 from models import Workspace, cache
 
-secret_api_token = os.environ["API_TOKEN"]
+secret_api_token = os.environ.get("API_TOKEN")
 app = FastAPI(title="SIEM Query Utils")
 
 
@@ -24,7 +24,7 @@ app = FastAPI(title="SIEM Query Utils")
 async def authenticate_request(request: Request, call_next):
     # Middleware to do a simple check of api token vs secure env var
     auth_token = request.query_params.get(
-        "auth_token", request.cookies.get("auth_token")
+        "auth_token", request.cookies.get("auth_token", "DEBUG")
     )
     if auth_token not in [secret_api_token]:
         response = Response(
@@ -138,12 +138,18 @@ def simple_query(query: str, name: str, timespan: str = "P7D"):
 
 
 @app.get("/globalQuery")
-def global_query(query: str, timespan: str = "P7D", count: bool = False, blobdest: str = "", filenamekeys: list = []):
+def global_query(
+    query: str,
+    timespan: str = "P7D",
+    count: bool = False,
+    blobdest: str = "",
+    filenamekeys: str = "",
+):
     """
     Query all workspaces with SecurityIncident tables using kusto.
     If datalake is provided as a path the first 2 segments are assumed to be the location to save results to <account>/<container>/.../<filename>
     Results are saved as individual .json files, and overwritten if they already exist.
-    Filename is a python format string to be rendered from the json 
+    Filenamekeys are a comma separated list of keys to build filename from
     """
     results = analytics_query(
         [ws.customerId for ws in list_workspaces()], query, timespan
@@ -154,15 +160,44 @@ def global_query(query: str, timespan: str = "P7D", count: bool = False, blobdes
             prefix = prefix + "/"
         with tempfile.TemporaryDirectory() as tmpdir:
             for result in results:
-                filename = f"{result['TimeGenerated'].split('T')[0]}_" + "_".join([result[key] for key in filenamekeys]) + ".json"
-                print(prefix + "/" + filename)
-                with open(tmpdir + f"/{filename}", "w") as jsonfile:
-                    json.dump(result, jsonfile)
-            azcli("storage", "blob", "upload-batch", "-s", tmpdir, "-d", container, "--destination-path", prefix, "--account-name", accountname, "--auth-mode", "login")
+                dirname = f"{tmpdir}/{result['TimeGenerated'].split('T')[0]}"
+                filename = (
+                    "_".join([result[key] for key in filenamekeys.split(",")]) + ".json"
+                )
+                if not os.path.exists(dirname):
+                    os.mkdir(dirname)
+                with open(f"{dirname}/{filename}", "w") as jsonfile:
+                    json.dump(result, jsonfile, sort_keys=True, indent=2)
+            azcli(
+                "storage",
+                "blob",
+                "upload-batch",
+                "-s",
+                tmpdir,
+                "-d",
+                container,
+                "--destination-path",
+                prefix,
+                "--account-name",
+                accountname,
+                "--auth-mode",
+                "login",
+                "--overwrite",
+                "--content-type",
+                "application/json",
+            )
     if count:
         return len(results)
     else:
         return results
+
+
+def debug_server():
+    import uvicorn
+
+    azcli("extension", "add", "-n", "log-analytics", "-y")
+    os.environ["API_TOKEN"] = "DEBUG"
+    uvicorn.run("main:app", log_level="debug", reload=True)
 
 
 if __name__ == "__main__":
@@ -171,5 +206,8 @@ if __name__ == "__main__":
             "listWorkspaces": list_workspaces,
             "simpleQuery": simple_query,
             "globalQuery": global_query,
+            "debug": debug_server,
         }
     )
+elif not secret_api_token:
+    exit("Please set API_TOKEN env var to run web server")
