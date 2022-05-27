@@ -60,6 +60,7 @@ if os.environ.get("IDENTITY_HEADER"):
 
 def analytics_query(workspaces: list, query: str, timespan: str = "P7D"):
     "Queries a list of workspaces using kusto"
+    print(f"Log analytics query across {len(list)} workspaces")
     chunkSize = 100  # limit to 100 parallel workspaces at a time https://docs.microsoft.com/en-us/azure/azure-monitor/logs/cross-workspace-query#cross-resource-query-limits
     chunks = [
         sorted(workspaces)[x : x + chunkSize]
@@ -161,6 +162,7 @@ def global_query(
         with tempfile.TemporaryDirectory() as tmpdir:
             for result in results:
                 dirname = f"{tmpdir}/{result['TimeGenerated'].split('T')[0]}"
+                modifiedtime = datetime.fromisoformat(result["TimeGenerated"].replace("Z",""))
                 filename = (
                     "_".join([result[key] for key in filenamekeys.split(",")]) + ".json"
                 )
@@ -168,7 +170,8 @@ def global_query(
                     os.mkdir(dirname)
                 with open(f"{dirname}/{filename}", "w") as jsonfile:
                     json.dump(result, jsonfile, sort_keys=True, indent=2)
-            azcli(
+                os.utime(f"{dirname}/{filename}", modifiedtime.timestamp(), modifiedtime.timestamp())
+            azcli( # TODO: switch to using azcopy or sync to skip stuff with same filename/timestamp
                 "storage",
                 "blob",
                 "upload-batch",
@@ -193,6 +196,7 @@ def global_query(
 
 
 def debug_server():
+    "Run a debug server on localhost, port 8000 that doesn't need auth"
     import uvicorn
 
     azcli("extension", "add", "-n", "log-analytics", "-y")
