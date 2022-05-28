@@ -4,9 +4,9 @@ from datetime import datetime, timedelta
 from collections import namedtuple
 from functools import wraps
 from hashlib import sha256
-from playhouse.apsw_ext import APSWDatabase, BlobField, CharField, DateTimeField, Model
+from peewee import SqliteDatabase, BlobField, CharField, DateTimeField, Model
 
-db = APSWDatabase(f"/tmp/siemqueryutils_{datetime.now().date()}.sqlitecache")
+db = SqliteDatabase(f"/tmp/siemqueryutils_{datetime.now().date()}.sqlitecache")
 
 # named tuples need to be defined here for pickle to introspect
 Workspace = namedtuple("Workspace", "subscription, customerId, resourceGroup, name")

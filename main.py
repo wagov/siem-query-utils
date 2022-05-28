@@ -168,7 +168,7 @@ def upload_results(results, blobdest, filenamekeys):
             "--put-md5",
             "--overwrite=ifSourceNewer",
             "--recursive=true",
-            "--as-subdir=false"
+            "--as-subdir=false",
         ]
         print(cmd)
         run(cmd)
@@ -206,35 +206,6 @@ def debug_server():
 
     azcli(["extension", "add", "-n", "log-analytics", "-y"])
     azcli(["extension", "add", "-n", "resource-graph", "-y"])
-    try:
-        check_output(["azcopy", "--version"])
-    except:
-        run(
-            [
-                "curl",
-                "-L",
-                "https://aka.ms/downloadazcopy-v10-linux",
-                "-o",
-                "azcopy.tar.gz",
-            ]
-        )
-        run(
-            [
-                "sudo",
-                "tar",
-                "xvf",
-                "azcopy.tar.gz",
-                "-C",
-                "/usr/local/bin",
-                "--strip",
-                "1",
-                "--wildcards",
-                "*/azcopy",
-                "--no-same-owner",
-            ]
-        )
-        run(["sudo", "chmod", "a+x", "/usr/local/bin/azcopy"])
-        os.remove("azcopy.tar.gz")
     os.environ["API_TOKEN"] = "DEBUG"
     uvicorn.run("main:app", log_level="debug", reload=True)
 
