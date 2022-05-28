@@ -7,8 +7,9 @@ ENV API_TOKEN changeme
 
 WORKDIR /app
 RUN az extension add -n log-analytics -y
-RUN curl -L https://aka.ms/downloadazcopy-v10-linux -o azcopy.tar.gz
-RUN tar xvf azcopy.tar.gz -C /usr/local/bin --strip 1 --wildcards */azcopy --no-same-owner; rm azcopy.tar.gz
+RUN az extension add -n resource-graph -y
+RUN curl -L https://aka.ms/downloadazcopy-v10-linux -o /tmp/azcopy.tar.gz
+RUN cd /tmp && tar xf azcopy.tar.gz --strip 1 && rm azcopy.tar.gz && mv -v azcopy /usr/local/bin/azcopy
 RUN openssl req -x509 -nodes -newkey rsa:4096 -keyout selfsigned-key.pem -out selfsigned.pem -sha256 -days 3650 -subj '/CN=localhost'
 COPY requirements.txt requirements.txt
 RUN pip3 install -r requirements.txt
