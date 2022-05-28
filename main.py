@@ -146,34 +146,32 @@ def upload_results(results, blobdest, filenamekeys):
     with tempfile.TemporaryDirectory() as tmpdir:
         dirnames = set()
         for result in results:
-            dirname = f"{tmpdir}/{result['TimeGenerated'].split('T')[0]}"
+            dirname = f"{result['TimeGenerated'].split('T')[0]}"
             dirnames.add(dirname)
             modifiedtime = isoparse(result["TimeGenerated"])
             filename = (
                 "_".join([result[key] for key in filenamekeys.split(",")]) + ".json"
             )
-            if not os.path.exists(dirname):
-                os.mkdir(dirname)
-            with open(f"{dirname}/{filename}", "w") as jsonfile:
+            if not os.path.exists(f"{tmpdir}/{dirname}"):
+                os.mkdir(f"{tmpdir}/{dirname}")
+            with open(f"{tmpdir}/{dirname}/{filename}", "w") as jsonfile:
                 json.dump(result, jsonfile, sort_keys=True, indent=2)
             os.utime(
-                f"{dirname}/{filename}",
+                f"{tmpdir}/{dirname}/{filename}",
                 (modifiedtime.timestamp(), modifiedtime.timestamp()),
             )
-        cmds = []
-        for dirname in dirnames:
-            # sync each day separately to avoid listing unnecessary blobs
-            cmds.append(
-                [
-                    "azcopy",
-                    "sync",
-                    dirname,
-                    f"https://{account}.blob.core.windows.net/{dest}/{dirname}",
-                    "--put-md5"
-                ]
-            )
-        with ThreadPoolExecutor() as executor:
-            executor.map(run, cmds)
+        cmd = [
+            "azcopy",
+            "cp",
+            tmpdir,
+            f"https://{account}.blob.core.windows.net/{dest}",
+            "--put-md5",
+            "--overwrite=ifSourceNewer",
+            "--recursive=true",
+            "--as-subdir=false"
+        ]
+        print(cmd)
+        run(cmd)
 
 
 @app.get("/globalQuery")
