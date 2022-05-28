@@ -3,8 +3,12 @@ FROM mcr.microsoft.com/azure-cli:2.36.0
 MAINTAINER cybersecurity@dpc.wa.gov.au
 LABEL org.opencontainers.image.source https://github.com/wagov/siem-query-utils
 
+ENV API_TOKEN changeme
+
 WORKDIR /app
 RUN az extension add -n log-analytics -y
+RUN curl -L https://aka.ms/downloadazcopy-v10-linux -o azcopy.tar.gz
+RUN tar xvf azcopy.tar.gz -C /usr/local/bin --strip 1 --wildcards */azcopy --no-same-owner; rm azcopy.tar.gz
 RUN openssl req -x509 -nodes -newkey rsa:4096 -keyout selfsigned-key.pem -out selfsigned.pem -sha256 -days 3650 -subj '/CN=localhost'
 COPY requirements.txt requirements.txt
 RUN pip3 install -r requirements.txt

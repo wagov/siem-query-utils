@@ -4,17 +4,16 @@ import os
 import sys
 import time
 import tempfile
-from collections import namedtuple
-from datetime import timedelta, datetime
 from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta, datetime
 from fire import Fire
 from pathlib import Path
-from subprocess import check_output
-from typing import Union
+from subprocess import check_output, run
+from dateutil.parser import isoparse
 
-from fastapi import FastAPI, Response, Request
+from fastapi import FastAPI, Response, Request, BackgroundTasks
 
-from models import Workspace, cache
+from sqlitecache import cache, Workspace
 
 secret_api_token = os.environ.get("API_TOKEN")
 app = FastAPI(title="SIEM Query Utils")
@@ -38,10 +37,9 @@ async def authenticate_request(request: Request, call_next):
 
 
 @cache()
-def azcli(*cmd):
+def azcli(cmd: list):
     "Run a general azure cli cmd"
-    cmd = ["az"] + list(cmd) + ["--only-show-errors", "-o", "json"]
-    print("Executing: " + " ".join(cmd))
+    cmd = ["az"] + cmd + ["--only-show-errors", "-o", "json"]
     result = check_output(cmd)
     if not result:
         return None
@@ -51,83 +49,87 @@ def azcli(*cmd):
 if os.environ.get("IDENTITY_HEADER"):
     # Use managed service identity to login
     try:
-        azcli("login", "--identity")
+        azcli(["login", "--identity"])
+        run(["azcopy", "login", "--identity"])
     except Exception as e:
         # bail as we aren't able to login
         print(e)
         exit()
 
 
-def analytics_query(workspaces: list, query: str, timespan: str = "P7D"):
+def analytics_query(
+    workspaces: list, query: str, timespan: str = "P7D", outputfilter: str = ""
+):
     "Queries a list of workspaces using kusto"
-    print(f"Log analytics query across {len(list)} workspaces")
-    chunkSize = 100  # limit to 100 parallel workspaces at a time https://docs.microsoft.com/en-us/azure/azure-monitor/logs/cross-workspace-query#cross-resource-query-limits
+    print(f"Log analytics query across {len(workspaces)} workspaces")
+    chunkSize = 20  # limit to 20 parallel workspaces at a time https://docs.microsoft.com/en-us/azure/azure-monitor/logs/cross-workspace-query#cross-resource-query-limits
     chunks = [
         sorted(workspaces)[x : x + chunkSize]
         for x in range(0, len(workspaces), chunkSize)
     ]  # awesome list comprehension to break big list into chunks of chunkSize
-    # chunks = [[1..100],[101..200]]
-    results, output = [], []
+    # chunks = [[1..10],[11..20]]
+    results, cmds = [], []
+    for chunk in chunks:
+        cmd = [
+            "monitor",
+            "log-analytics",
+            "query",
+            "--workspace",
+            chunk[0],
+            "--analytics-query",
+            query,
+            "--timespan",
+            timespan,
+        ]
+        if len(chunk) > 1:
+            cmd += ["--workspaces"] + chunk[1:]
+        if outputfilter:
+            cmd += ["--query", outputfilter]
+        cmds.append(cmd)
     with ThreadPoolExecutor() as executor:
-        for chunk in chunks:
-            cmd = [
-                "monitor",
-                "log-analytics",
-                "query",
-                "--workspace",
-                chunk[0],
-                "--analytics-query",
-                query,
-                "--timespan",
-                timespan,
-            ]
-            if len(chunk) > 1:
-                cmd += ["--workspaces"] + chunk[1:]
-            results.append(executor.submit(azcli, *cmd))
-    for future in results:
-        try:
-            output += future.result()
-        except Exception as e:
-            print(e)
-    return output
+        for result in executor.map(azcli, cmds):
+            if result:
+                results += result
+    return results
 
 
 @app.get("/listWorkspaces")
-def list_workspaces(lastseen: int = 24):
-    "Get workspaces seen in lastseen hrs as a list of named tuples"
-    lastseen = datetime.now() - timedelta(hours=lastseen)
-    if not Workspace.select(Workspace.seen >= lastseen).exists():
-        with ThreadPoolExecutor() as executor:
-            subscriptions = azcli("account", "list", "--query", "[].id")
-            wsquery = [
-                "monitor",
-                "log-analytics",
-                "workspace",
-                "list",
-                "--query",
-                "[].[customerId,resourceGroup,name]",
-            ]
-            subscriptions = [
-                (s, executor.submit(azcli, *list(wsquery + ["--subscription", s])))
-                for s in subscriptions
-            ]
-        for subscription, future in subscriptions:
-            for customerId, resourceGroup, name in future.result():
-                Workspace.create(
-                    subscription=subscription,
-                    customerId=customerId,
-                    resourceGroup=resourceGroup,
-                    name=name,
-                )
-        # cross check workspaces to make sure they have SecurityIncident tables
-        validated = analytics_query(
-            [ws[0] for ws in Workspace.select(Workspace.customerId).tuples()],
-            "SecurityIncident | distinct TenantId",
-        )
-        validated = frozenset([item["TenantId"] for item in validated])
-        Workspace.delete().where(Workspace.customerId.not_in(validated)).execute()
-        Workspace.delete().where(Workspace.seen < lastseen).execute()
-    return list(Workspace.select().where(Workspace.seen >= lastseen).namedtuples())
+@cache(seconds=60 * 60 * 3)  # 3 hr cache
+def list_workspaces():
+    "Get sentinel workspaces as a list of named tuples"
+    workspaces = azcli(
+        [
+            "graph",
+            "query",
+            "-q",
+            """Resources
+            | where type == 'microsoft.operationalinsights/workspaces'
+            | project id, name, resourceGroup, subscription = subscriptionId, customerId = tostring(properties.customerId)
+            | join (Resources
+                    | where type == 'microsoft.operationsmanagement/solutions' and plan.product contains 'security'
+                    | project name = tostring(split(properties.workspaceResourceId, '/')[-1])
+            ) on name
+            | distinct subscription, customerId, name, resourceGroup
+            """,
+            "--first",
+            "1000",
+            "--query",
+            "data[]",
+        ]
+    )
+    # subscriptions is filtered to just those with security solutions installed
+    sentinelworkspaces = set()
+    # TODO: page on skiptoken if total workspaces exceeds 1000
+    # cross check workspaces to make sure they have SecurityIncident tables
+    validated = analytics_query(
+        [ws["customerId"] for ws in workspaces],
+        "SecurityIncident | distinct TenantId",
+        outputfilter="[].TenantId",
+    )
+    for ws in workspaces:
+        if ws["customerId"] in validated:
+            sentinelworkspaces.add(Workspace(**ws))
+    return sorted(list(sentinelworkspaces))
 
 
 @app.get("/simpleQuery")
@@ -138,9 +140,46 @@ def simple_query(query: str, name: str, timespan: str = "P7D"):
             return analytics_query([workspace.customerId], query, timespan)
 
 
+def upload_results(results, blobdest, filenamekeys):
+    "Uploads a list of json results as individual files split by timegenerated to a blob destination"
+    account, dest = blobdest.split("/", 1)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        dirnames = set()
+        for result in results:
+            dirname = f"{tmpdir}/{result['TimeGenerated'].split('T')[0]}"
+            dirnames.add(dirname)
+            modifiedtime = isoparse(result["TimeGenerated"])
+            filename = (
+                "_".join([result[key] for key in filenamekeys.split(",")]) + ".json"
+            )
+            if not os.path.exists(dirname):
+                os.mkdir(dirname)
+            with open(f"{dirname}/{filename}", "w") as jsonfile:
+                json.dump(result, jsonfile, sort_keys=True, indent=2)
+            os.utime(
+                f"{dirname}/{filename}",
+                (modifiedtime.timestamp(), modifiedtime.timestamp()),
+            )
+        cmds = []
+        for dirname in dirnames:
+            # sync each day separately to avoid listing unnecessary blobs
+            cmds.append(
+                [
+                    "azcopy",
+                    "sync",
+                    dirname,
+                    f"https://{account}.blob.core.windows.net/{dest}/{dirname}",
+                    "--put-md5"
+                ]
+            )
+        with ThreadPoolExecutor() as executor:
+            executor.map(run, cmds)
+
+
 @app.get("/globalQuery")
 def global_query(
     query: str,
+    tasks: BackgroundTasks,
     timespan: str = "P7D",
     count: bool = False,
     blobdest: str = "",
@@ -156,39 +195,7 @@ def global_query(
         [ws.customerId for ws in list_workspaces()], query, timespan
     )
     if blobdest != "":
-        accountname, container, prefix = blobdest.split("/", 2)
-        if not prefix.endswith("/"):
-            prefix = prefix + "/"
-        with tempfile.TemporaryDirectory() as tmpdir:
-            for result in results:
-                dirname = f"{tmpdir}/{result['TimeGenerated'].split('T')[0]}"
-                modifiedtime = datetime.fromisoformat(result["TimeGenerated"].replace("Z",""))
-                filename = (
-                    "_".join([result[key] for key in filenamekeys.split(",")]) + ".json"
-                )
-                if not os.path.exists(dirname):
-                    os.mkdir(dirname)
-                with open(f"{dirname}/{filename}", "w") as jsonfile:
-                    json.dump(result, jsonfile, sort_keys=True, indent=2)
-                os.utime(f"{dirname}/{filename}", modifiedtime.timestamp(), modifiedtime.timestamp())
-            azcli( # TODO: switch to using azcopy or sync to skip stuff with same filename/timestamp
-                "storage",
-                "blob",
-                "upload-batch",
-                "-s",
-                tmpdir,
-                "-d",
-                container,
-                "--destination-path",
-                prefix,
-                "--account-name",
-                accountname,
-                "--auth-mode",
-                "login",
-                "--overwrite",
-                "--content-type",
-                "application/json",
-            )
+        tasks.add_task(upload_results, results, blobdest, filenamekeys)
     if count:
         return len(results)
     else:
@@ -199,7 +206,37 @@ def debug_server():
     "Run a debug server on localhost, port 8000 that doesn't need auth"
     import uvicorn
 
-    azcli("extension", "add", "-n", "log-analytics", "-y")
+    azcli(["extension", "add", "-n", "log-analytics", "-y"])
+    azcli(["extension", "add", "-n", "resource-graph", "-y"])
+    try:
+        check_output(["azcopy", "--version"])
+    except:
+        run(
+            [
+                "curl",
+                "-L",
+                "https://aka.ms/downloadazcopy-v10-linux",
+                "-o",
+                "azcopy.tar.gz",
+            ]
+        )
+        run(
+            [
+                "sudo",
+                "tar",
+                "xvf",
+                "azcopy.tar.gz",
+                "-C",
+                "/usr/local/bin",
+                "--strip",
+                "1",
+                "--wildcards",
+                "*/azcopy",
+                "--no-same-owner",
+            ]
+        )
+        run(["sudo", "chmod", "a+x", "/usr/local/bin/azcopy"])
+        os.remove("azcopy.tar.gz")
     os.environ["API_TOKEN"] = "DEBUG"
     uvicorn.run("main:app", log_level="debug", reload=True)
 
@@ -213,5 +250,5 @@ if __name__ == "__main__":
             "debug": debug_server,
         }
     )
-elif not secret_api_token:
+elif not secret_api_token or secret_api_token == "changeme":
     exit("Please set API_TOKEN env var to run web server")

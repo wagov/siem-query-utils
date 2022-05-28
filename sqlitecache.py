@@ -1,24 +1,20 @@
 #!/usr/bin/env python3
 import pickle
 from datetime import datetime, timedelta
+from collections import namedtuple
 from functools import wraps
 from hashlib import sha256
 from playhouse.apsw_ext import APSWDatabase, BlobField, CharField, DateTimeField, Model
 
-db = APSWDatabase("sqlite.db")
+db = APSWDatabase(f"/tmp/siemqueryutils_{datetime.now().date()}.sqlitecache")
+
+# named tuples need to be defined here for pickle to introspect
+Workspace = namedtuple("Workspace", "subscription, customerId, resourceGroup, name")
 
 
 class BaseModel(Model):
     class Meta:
         database = db
-
-
-class Workspace(BaseModel):
-    customerId = CharField(primary_key=True)
-    subscription = CharField()
-    resourceGroup = CharField()
-    name = CharField()
-    seen = DateTimeField(default=datetime.now)
 
 
 class CacheModel(BaseModel):
@@ -37,7 +33,7 @@ def cache(seconds=300, maxsize=100):
             funcname = func.__name__
             arghash = sha256(pickle.dumps((funcname, args, kwargs))).hexdigest()
             cached = CacheModel.get_or_none(CacheModel.arghash == arghash)
-            if cached and cached.expires > datetime.now():
+            if cached and cached.expires < datetime.now():
                 cached.delete_instance()
                 cached = False
             if not cached:
@@ -75,4 +71,4 @@ def cache(seconds=300, maxsize=100):
     return wrapper
 
 
-db.create_tables([Workspace, CacheModel])
+db.create_tables([CacheModel])

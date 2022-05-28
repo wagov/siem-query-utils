@@ -1,4 +1,5 @@
 fastapi[all]
+python-dateutil
 fire
 peewee
 apsw
