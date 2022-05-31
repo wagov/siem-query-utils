@@ -62,7 +62,7 @@ def loadkql(query):
     if query.startswith("kql/"):
         query = open(query).read().encode("utf-8").strip()
     elif query.startswith("https:"):
-        query = check_output(["curl", "-L", query]).encode("utf-8").strip()
+        query = check_output(["curl", "-L", query]).decode("utf-8").strip()
     return query
 
 
