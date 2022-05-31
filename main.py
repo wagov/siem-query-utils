@@ -57,11 +57,21 @@ if os.environ.get("IDENTITY_HEADER"):
         exit()
 
 
+def loadkql(query):
+    "If query starts with https: or kql/ then load it from url or local file and return text"
+    if query.startswith("kql/"):
+        query = open(query).read().encode("utf-8").strip()
+    elif query.startswith("https:"):
+        query = check_output(["curl", "-L", query]).encode("utf-8").strip()
+    return query
+
+
 def analytics_query(
     workspaces: list, query: str, timespan: str = "P7D", outputfilter: str = ""
 ):
     "Queries a list of workspaces using kusto"
     print(f"Log analytics query across {len(workspaces)} workspaces")
+    query = loadkql(query)
     chunkSize = 20  # limit to 20 parallel workspaces at a time https://docs.microsoft.com/en-us/azure/azure-monitor/logs/cross-workspace-query#cross-resource-query-limits
     chunks = [
         sorted(workspaces)[x : x + chunkSize]
@@ -102,15 +112,7 @@ def list_workspaces():
             "graph",
             "query",
             "-q",
-            """Resources
-            | where type == 'microsoft.operationalinsights/workspaces'
-            | project id, name, resourceGroup, subscription = subscriptionId, customerId = tostring(properties.customerId)
-            | join (Resources
-                    | where type == 'microsoft.operationsmanagement/solutions' and plan.product contains 'security'
-                    | project name = tostring(split(properties.workspaceResourceId, '/')[-1])
-            ) on name
-            | distinct subscription, customerId, name, resourceGroup
-            """,
+            loadkql("kql/graph-workspaces.kql"),
             "--first",
             "1000",
             "--query",
@@ -123,7 +125,7 @@ def list_workspaces():
     # cross check workspaces to make sure they have SecurityIncident tables
     validated = analytics_query(
         [ws["customerId"] for ws in workspaces],
-        "SecurityIncident | distinct TenantId",
+        "kql/distinct-tenantids.kql",
         outputfilter="[].TenantId",
     )
     for ws in workspaces:
@@ -185,7 +187,7 @@ def global_query(
 ):
     """
     Query all workspaces with SecurityIncident tables using kusto.
-    If datalake is provided as a path the first 2 segments are assumed to be the location to save results to <account>/<container>/.../<filename>
+    If blobdest is provided as a path the first 2 segments are assumed to be the location to save results to <account>/<container>/.../<filename>
     Results are saved as individual .json files, and overwritten if they already exist.
     Filenamekeys are a comma separated list of keys to build filename from
     """
@@ -194,6 +196,43 @@ def global_query(
     )
     if blobdest != "":
         tasks.add_task(upload_results, results, blobdest, filenamekeys)
+    if count:
+        return len(results)
+    else:
+        return results
+
+
+@app.get("/globalStats")
+def global_stats(
+    query: str,
+    timespan: str = "P7D",
+    count: bool = False,
+    blobdest: str = "",
+):
+    """
+    Query all workspaces with SecurityIncident tables using kusto.
+    If blobdest is provided as a path the date will replace the querydate param <account>/<container>/{querydate}/<filename>
+    Results are saved as a single json file intended for e.g. powerbi
+    """
+    results = analytics_query(
+        [ws.customerId for ws in list_workspaces()], query, timespan
+    )
+    if blobdest != "":
+        blobdest = blobdest.format(querydate=datetime.now().date().isoformat())
+        account, dest = blobdest.split("/", 1)
+        with tempfile.NamedTemporaryFile(mode="w") as uploadjson:
+            json.dump(results, uploadjson, sort_keys=True, indent=2)
+            uploadjson.flush()
+            cmd = [
+                "azcopy",
+                "cp",
+                uploadjson.name,
+                f"https://{account}.blob.core.windows.net/{dest}",
+                "--put-md5",
+                "--overwrite=true",
+            ]
+            print(cmd)
+            run(cmd)
     if count:
         return len(results)
     else:
@@ -216,6 +255,7 @@ if __name__ == "__main__":
             "listWorkspaces": list_workspaces,
             "simpleQuery": simple_query,
             "globalQuery": global_query,
+            "globalStats": global_stats,
             "debug": debug_server,
         }
     )
