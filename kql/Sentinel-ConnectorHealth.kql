@@ -1,12 +1,2 @@
-let Now = now();
-let timeago = 30d;
-let interval = 1h;
-(range TimeGenerated from ago(timeago) to Now - interval step interval
-| extend Count = 0
-| union isfuzzy=true
-    (SecurityIncident 
-    | where ProviderName == "Microsoft 365 Defender"
-    | summarize Count = count() by bin_at(TimeGenerated, interval, Now)), TenantId
-| summarize Count=max(Count) by bin_at(TimeGenerated, interval, Now), TenantId
-| sort by TimeGenerated, TenantId
-| project Value = iff(isnull(Count), 0, Count), Time = TimeGenerated, Tenant = TenantId, Legend = "Incidents")
+find TimeGenerated > ago(2d)
+| summarize Count = count() by bin(TimeGenerated, 1h), source_, TenantId
