@@ -2,4 +2,5 @@ fastapi[all]
 python-dateutil
 fire
 peewee
+markdown
 tabulate

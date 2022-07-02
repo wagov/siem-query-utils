@@ -7,6 +7,7 @@ import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from string import Template
+from markdown import markdown
 from fire import Fire
 from pathlib import Path
 from subprocess import check_output, run
@@ -254,15 +255,17 @@ def sentinel_beautify(data: dict = Body(...)):
     urlhash.update(data["IncidentUrl"].encode("utf-8"))
     urlhash = urlhash.hexdigest()
     subject = f"Sentinel Detection - {data['Title']} ({data['Status']}) - urlhash:{urlhash}"
-    content = f"<h2>Sentinel Detection - {data['Title']} ({data['Status']})</h2>"
-    content += f"<p>Sentinel Incident: <a href='{data['IncidentUrl']}'>{data['IncidentNumber']}</a></p>"
+    mdtext = f"# Sentinel Detection - {data['Title']} ({data['Status']})\n"
+    mdtext += f"Sentinel Incident: [{data['IncidentNumber']}]({data['IncidentUrl']})\n"
 
     footer = os.environ.get("FOOTER_HTML", "Set FOOTER_HTML env var to configure this...")
+    content = markdown(mdtext, extensions=["tables"])
     html = email_template.substitute(title=subject, content=content, footer=footer)
 
     response = {
         "subject": subject,
         "html": html,
+        "markdown": mdtext,
         "labels": labels,
         "urlhash": urlhash,
         "sentinel_data": data,
