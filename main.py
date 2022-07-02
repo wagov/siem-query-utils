@@ -18,6 +18,7 @@ from sqlitecache import cache, Workspace
 
 secret_api_token = os.environ.get("API_TOKEN")
 datalake_blob_prefix = os.environ.get("DATALAKE_BLOB_PREFIX")
+os.environ["AZURE_STORAGE_AUTH_MODE"] = "login"
 
 app = FastAPI(title="SIEM Query Utils")
 
@@ -198,24 +199,10 @@ email_template = Template(open("templates/email-template.html").read())
 
 
 def get_datalake_file(path: str):
-    return azcli(
-        [
-            "storage",
-            "blob",
-            "downlaod",
-            "--auth-mode",
-            "--login",
-            "--blob-url",
-            f"{datalake_blob_prefix}/{path}",
-            "-f",
-            "/dev/stdout",
-            "--max-connections",
-            "1",
-            "--no-progress",
-            "--output",
-            "none",
-        ]
-    )
+    url = f"{datalake_blob_prefix}/{path}"
+    cmd = ["az", "storage", "blob", "download", "--blob-url", url, "-f", "/dev/stdout", "--max-connections", "1", "--no-progress", "-o", "none"]
+    result = check_output(cmd)
+    return json.loads(result)
 
 
 @app.post("/sentinelBeautify")
@@ -252,10 +239,10 @@ def sentinel_beautify(data: dict = Body(...)):
                 url = f"sentinel_outputs/alerts/{data['LastActivityTime'].split('T')[0]}/{data['TenantId']}_{alertid}.json"
                 alert = get_datalake_file(url)
             except Exception as e:  # alert may not exist on day of last activity time
-                pass
+                print(e)
             else:
                 try:
-                    alert["Entities"] = flatten(json.loads(alert.get("Entities", "null")))
+                    alert["Entities"] = json.loads(alert.get("Entities", "null"))
                     alert["ExtendedProperties"] = json.loads(alert.get("ExtendedProperties", "null"))
                     alert["RemediationSteps"] = json.loads(alert.get("RemediationSteps", "null"))
                     alertdata.append(alert)
