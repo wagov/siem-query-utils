@@ -2,6 +2,7 @@
 import json
 import os
 import hashlib
+from pkgutil import get_data
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -16,19 +17,17 @@ from fastapi import FastAPI, Response, Body, Request, BackgroundTasks
 from sqlitecache import cache, Workspace
 
 secret_api_token = os.environ.get("API_TOKEN")
+datalake_blob_prefix = os.environ.get("DATALAKE_BLOB_PREFIX")
+
 app = FastAPI(title="SIEM Query Utils")
 
 
 @app.middleware("http")
 async def authenticate_request(request: Request, call_next):
     # Middleware to do a simple check of api token vs secure env var
-    auth_token = request.query_params.get(
-        "auth_token", request.cookies.get("auth_token", "DEBUG")
-    )
+    auth_token = request.query_params.get("auth_token", request.cookies.get("auth_token", "DEBUG"))
     if auth_token not in [secret_api_token]:
-        response = Response(
-            content="Invalid auth_token", status_code=403, media_type="text/plain"
-        )
+        response = Response(content="Invalid auth_token", status_code=403, media_type="text/plain")
     else:
         response = await call_next(request)
         if request.cookies.get("auth_token") != auth_token:
@@ -66,31 +65,18 @@ def loadkql(query):
     return query
 
 
-def analytics_query(
-    workspaces: list, query: str, timespan: str = "P7D", outputfilter: str = ""
-):
+def analytics_query(workspaces: list, query: str, timespan: str = "P7D", outputfilter: str = ""):
     "Queries a list of workspaces using kusto"
     print(f"Log analytics query across {len(workspaces)} workspaces")
     query = loadkql(query)
     chunkSize = 20  # limit to 20 parallel workspaces at a time https://docs.microsoft.com/en-us/azure/azure-monitor/logs/cross-workspace-query#cross-resource-query-limits
     chunks = [
-        sorted(workspaces)[x : x + chunkSize]
-        for x in range(0, len(workspaces), chunkSize)
+        sorted(workspaces)[x : x + chunkSize] for x in range(0, len(workspaces), chunkSize)
     ]  # awesome list comprehension to break big list into chunks of chunkSize
     # chunks = [[1..10],[11..20]]
     results, cmds = [], []
     for chunk in chunks:
-        cmd = [
-            "monitor",
-            "log-analytics",
-            "query",
-            "--workspace",
-            chunk[0],
-            "--analytics-query",
-            query,
-            "--timespan",
-            timespan,
-        ]
+        cmd = ["monitor", "log-analytics", "query", "--workspace", chunk[0], "--analytics-query", query, "--timespan", timespan]
         if len(chunk) > 1:
             cmd += ["--workspaces"] + chunk[1:]
         if outputfilter:
@@ -107,18 +93,7 @@ def analytics_query(
 @cache(seconds=60 * 60 * 3)  # 3 hr cache
 def list_workspaces():
     "Get sentinel workspaces as a list of named tuples"
-    workspaces = azcli(
-        [
-            "graph",
-            "query",
-            "-q",
-            loadkql("kql/graph-workspaces.kql"),
-            "--first",
-            "1000",
-            "--query",
-            "data[]",
-        ]
-    )
+    workspaces = azcli(["graph", "query", "-q", loadkql("kql/graph-workspaces.kql"), "--first", "1000", "--query", "data[]"])
     # subscriptions is filtered to just those with security solutions installed
     sentinelworkspaces = set()
     # TODO: page on skiptoken if total workspaces exceeds 1000
@@ -151,9 +126,7 @@ def upload_results(results, blobdest, filenamekeys):
             dirname = f"{result['TimeGenerated'].split('T')[0]}"
             dirnames.add(dirname)
             modifiedtime = isoparse(result["TimeGenerated"])
-            filename = (
-                "_".join([result[key] for key in filenamekeys.split(",")]) + ".json"
-            )
+            filename = "_".join([result[key] for key in filenamekeys.split(",")]) + ".json"
             if not os.path.exists(f"{tmpdir}/{dirname}"):
                 os.mkdir(f"{tmpdir}/{dirname}")
             with open(f"{tmpdir}/{dirname}/{filename}", "w") as jsonfile:
@@ -177,23 +150,14 @@ def upload_results(results, blobdest, filenamekeys):
 
 
 @app.get("/globalQuery")
-def global_query(
-    query: str,
-    tasks: BackgroundTasks,
-    timespan: str = "P7D",
-    count: bool = False,
-    blobdest: str = "",
-    filenamekeys: str = "",
-):
+def global_query(query: str, tasks: BackgroundTasks, timespan: str = "P7D", count: bool = False, blobdest: str = "", filenamekeys: str = ""):
     """
     Query all workspaces with SecurityIncident tables using kusto.
     If blobdest is provided as a path the first 2 segments are assumed to be the location to save results to <account>/<container>/.../<filename>
     Results are saved as individual .json files, and overwritten if they already exist.
     Filenamekeys are a comma separated list of keys to build filename from
     """
-    results = analytics_query(
-        [ws.customerId for ws in list_workspaces()], query, timespan
-    )
+    results = analytics_query([ws.customerId for ws in list_workspaces()], query, timespan)
     if blobdest != "":
         tasks.add_task(upload_results, results, blobdest, filenamekeys)
     if count:
@@ -214,23 +178,14 @@ def global_stats(
     If blobdest is provided as a path the date will replace the querydate param <account>/<container>/{querydate}/<filename>
     Results are saved as a single json file intended for e.g. powerbi
     """
-    results = analytics_query(
-        [ws.customerId for ws in list_workspaces()], query, timespan
-    )
+    results = analytics_query([ws.customerId for ws in list_workspaces()], query, timespan)
     if blobdest != "":
         blobdest = blobdest.format(querydate=datetime.now().date().isoformat())
         account, dest = blobdest.split("/", 1)
         with tempfile.NamedTemporaryFile(mode="w") as uploadjson:
             json.dump(results, uploadjson, sort_keys=True, indent=2)
             uploadjson.flush()
-            cmd = [
-                "azcopy",
-                "cp",
-                uploadjson.name,
-                f"https://{account}.blob.core.windows.net/{dest}",
-                "--put-md5",
-                "--overwrite=true",
-            ]
+            cmd = ["azcopy", "cp", uploadjson.name, f"https://{account}.blob.core.windows.net/{dest}", "--put-md5", "--overwrite=true"]
             print(cmd)
             run(cmd)
     if count:
@@ -242,13 +197,30 @@ def global_stats(
 email_template = Template(open("templates/email-template.html").read())
 
 
+def get_datalake_file(path: str):
+    return azcli(
+        [
+            "storage",
+            "blob",
+            "downlaod",
+            "--auth-mode",
+            "--login",
+            "--blob-url",
+            f"{datalake_blob_prefix}/{path}",
+            "-f",
+            "/dev/stdout",
+            "--max-connections",
+            "1",
+            "--no-progress",
+            "--output",
+            "none",
+        ]
+    )
+
+
 @app.post("/sentinelBeautify")
 def sentinel_beautify(data: dict = Body(...)):
-    labels = [
-        f"SIEM_Severity:{data['Severity']}",
-        f"SIEM_Status:{data['Status']}",
-        f"SIEM_Title:{data['Title']}",
-    ]
+    labels = [f"SIEM_Severity:{data['Severity']}", f"SIEM_Status:{data['Status']}", f"SIEM_Title:{data['Title']}"]
 
     if data.get("Classification"):
         labels.append(f"SIEM_Classification:{data['Classification']}")
@@ -265,48 +237,40 @@ def sentinel_beautify(data: dict = Body(...)):
     if data.get("AdditionalData"):
         data["AdditionalData"] = json.loads(data["AdditionalData"])
         if data["AdditionalData"].get("alertProductNames"):
-            labels.append(
-                f"SIEM_alertProductNames:{','.join(data['AdditionalData']['alertProductNames'])}"
-            )
+            labels.append(f"SIEM_alertProductNames:{','.join(data['AdditionalData']['alertProductNames'])}")
         if data["AdditionalData"].get("tactics"):
             labels.append(f"SIEM_tactics:{','.join(data['AdditionalData']['tactics'])}")
         if data["AdditionalData"].get("techniques"):
-            labels.append(
-                f"SIEM_techniques:{','.join(data['AdditionalData']['techniques'])}"
-            )
+            labels.append(f"SIEM_techniques:{','.join(data['AdditionalData']['techniques'])}")
 
-    # TODO: grab blob with az cli instead of urllib
-    # if data.get("AlertIds") and blob_prefix and blob_sastoken:
-    #     data["AlertIds"] = json.loads(data["AlertIds"])
-    #     alertdata = []
-    #     for alertid in data["AlertIds"]:
-    #         # below should be able to find all the alerts from the latest day of activity
-    #         try:
-    #             url = f"{blob_prefix}/alerts/{data['LastActivityTime'].split('T')[0]}/{data['TenantId']}_{alertid}.json?{blob_sastoken}"
-    #             alert = json.loads(urlopen(url).read().decode("utf-8"))
-    #         except Exception as e:
-    #             continue
-    #         else:
-    #             try:
-    #                 alert["Entities"] = flatten(json.loads(alert.get("Entities", "null")))
-    #                 alert["ExtendedProperties"] = json.loads(alert.get("ExtendedProperties", "null"))
-    #                 alert["RemediationSteps"] = json.loads(alert.get("RemediationSteps", "null"))
-    #                 alertdata.append(flatten(alert))
-    #             except Exception as e:
-    #     data["AlertData"] = alertdata
+    if data.get("AlertIds") and datalake_blob_prefix:
+        data["AlertIds"] = json.loads(data["AlertIds"])
+        alertdata = []
+        for alertid in data["AlertIds"]:
+            # below should be able to find all the alerts from the latest day of activity
+            try:
+                url = f"sentinel_outputs/alerts/{data['LastActivityTime'].split('T')[0]}/{data['TenantId']}_{alertid}.json"
+                alert = get_datalake_file(url)
+            except Exception as e:  # alert may not exist on day of last activity time
+                pass
+            else:
+                try:
+                    alert["Entities"] = flatten(json.loads(alert.get("Entities", "null")))
+                    alert["ExtendedProperties"] = json.loads(alert.get("ExtendedProperties", "null"))
+                    alert["RemediationSteps"] = json.loads(alert.get("RemediationSteps", "null"))
+                    alertdata.append(alert)
+                except Exception as e:
+                    print(e)
+        data["AlertData"] = alertdata
 
     urlhash = hashlib.new("sha256")
     urlhash.update(data["IncidentUrl"].encode("utf-8"))
     urlhash = urlhash.hexdigest()
-    subject = (
-        f"Sentinel Detection - {data['Title']} ({data['Status']}) - urlhash:{urlhash}"
-    )
+    subject = f"Sentinel Detection - {data['Title']} ({data['Status']}) - urlhash:{urlhash}"
     content = f"<h2>Sentinel Detection - {data['Title']} ({data['Status']})</h2>"
     content += f"<p>Sentinel Incident: <a href='{data['IncidentUrl']}'>{data['IncidentNumber']}</a></p>"
 
-    footer = os.environ.get(
-        "FOOTER_HTML", "Set FOOTER_HTML env var to configure this..."
-    )
+    footer = os.environ.get("FOOTER_HTML", "Set FOOTER_HTML env var to configure this...")
     html = email_template.substitute(title=subject, content=content, footer=footer)
 
     response = {
