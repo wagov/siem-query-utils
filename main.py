@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 import json
 import os
-import sys
-import time
+import hashlib
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
-from datetime import timedelta, datetime
+from datetime import datetime
+from string import Template
 from fire import Fire
 from pathlib import Path
 from subprocess import check_output, run
 from dateutil.parser import isoparse
 
-from fastapi import FastAPI, Response, Request, BackgroundTasks
+from fastapi import FastAPI, Response, Body, Request, BackgroundTasks
 
 from sqlitecache import cache, Workspace
 
@@ -239,14 +239,94 @@ def global_stats(
         return results
 
 
+email_template = Template(open("templates/email-template.html").read())
+
+
+@app.post("/sentinelBeautify")
+def sentinel_beautify(data: dict = Body(...)):
+    labels = [
+        f"SIEM_Severity:{data['Severity']}",
+        f"SIEM_Status:{data['Status']}",
+        f"SIEM_Title:{data['Title']}",
+    ]
+
+    if data.get("Classification"):
+        labels.append(f"SIEM_Classification:{data['Classification']}")
+    if data.get("ClassificationReason"):
+        labels.append(f"SIEM_ClassificationReason:{data['ClassificationReason']}")
+    if data.get("ProviderName"):
+        labels.append(f"SIEM_ProviderName:{data['ProviderName']}")
+
+    if data.get("Owner"):
+        data["Owner"] = json.loads(data["Owner"])
+        if data["Owner"].get("email"):
+            labels.append(f"SIEM_OwnerEmail:{data['Owner']['email']}")
+
+    if data.get("AdditionalData"):
+        data["AdditionalData"] = json.loads(data["AdditionalData"])
+        if data["AdditionalData"].get("alertProductNames"):
+            labels.append(
+                f"SIEM_alertProductNames:{','.join(data['AdditionalData']['alertProductNames'])}"
+            )
+        if data["AdditionalData"].get("tactics"):
+            labels.append(f"SIEM_tactics:{','.join(data['AdditionalData']['tactics'])}")
+        if data["AdditionalData"].get("techniques"):
+            labels.append(
+                f"SIEM_techniques:{','.join(data['AdditionalData']['techniques'])}"
+            )
+
+    # TODO: grab blob with az cli instead of urllib
+    # if data.get("AlertIds") and blob_prefix and blob_sastoken:
+    #     data["AlertIds"] = json.loads(data["AlertIds"])
+    #     alertdata = []
+    #     for alertid in data["AlertIds"]:
+    #         # below should be able to find all the alerts from the latest day of activity
+    #         try:
+    #             url = f"{blob_prefix}/alerts/{data['LastActivityTime'].split('T')[0]}/{data['TenantId']}_{alertid}.json?{blob_sastoken}"
+    #             alert = json.loads(urlopen(url).read().decode("utf-8"))
+    #         except Exception as e:
+    #             continue
+    #         else:
+    #             try:
+    #                 alert["Entities"] = flatten(json.loads(alert.get("Entities", "null")))
+    #                 alert["ExtendedProperties"] = json.loads(alert.get("ExtendedProperties", "null"))
+    #                 alert["RemediationSteps"] = json.loads(alert.get("RemediationSteps", "null"))
+    #                 alertdata.append(flatten(alert))
+    #             except Exception as e:
+    #     data["AlertData"] = alertdata
+
+    urlhash = hashlib.new("sha256")
+    urlhash.update(data["IncidentUrl"].encode("utf-8"))
+    urlhash = urlhash.hexdigest()
+    subject = (
+        f"Sentinel Detection - {data['Title']} ({data['Status']}) - urlhash:{urlhash}"
+    )
+    content = f"<h2>Sentinel Detection - {data['Title']} ({data['Status']})</h2>"
+    content += f"<p>Sentinel Incident: <a href='{data['IncidentUrl']}'>{data['IncidentNumber']}</a></p>"
+
+    footer = os.environ.get(
+        "FOOTER_HTML", "Set FOOTER_HTML env var to configure this..."
+    )
+    html = email_template.substitute(title=subject, content=content, footer=footer)
+
+    response = {
+        "subject": subject,
+        "html": html,
+        "labels": labels,
+        "urlhash": urlhash,
+        "sentinel_data": data,
+    }
+    return response
+
+
 def debug_server():
-    "Run a debug server on localhost, port 8000 that doesn't need auth"
+    "Run a debug server on port 8000 that doesn't need auth"
     import uvicorn
 
     azcli(["extension", "add", "-n", "log-analytics", "-y"])
     azcli(["extension", "add", "-n", "resource-graph", "-y"])
     os.environ["API_TOKEN"] = "DEBUG"
-    uvicorn.run("main:app", log_level="debug", reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, log_level="debug", reload=True)
 
 
 if __name__ == "__main__":
