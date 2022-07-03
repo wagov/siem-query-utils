@@ -9,7 +9,6 @@ from datetime import datetime
 from string import Template
 from markdown import markdown
 from flatten_json import flatten
-from tabulate import tabulate
 from fire import Fire
 from pathlib import Path
 from subprocess import check_output, run
