@@ -288,7 +288,7 @@ def sentinel_beautify(blob_path: str):
                                 if value and len(value) < 200:
                                     alert_details.append(f"- **{entrykey}:** {value}")
                                 elif value: # break out long blocks
-                                    alert_details += [f"- **{entrykey}:**", "```", value, "", "```"]
+                                    alert_details += [f"- **{entrykey}:**", "", "```", value, "```", ""]
                         else:  # otherwise just add as separate lines
                             alert_details += ["", f"#### {key}"] + [item for item in alert[key]]
                 alertdata.append(alert)
