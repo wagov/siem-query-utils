@@ -216,7 +216,7 @@ def sentinel_beautify(blob_path: str):
         blob_path = blob_path[10:]
     data = get_datalake_file(blob_path)
     labels = [f"SIEM_Severity:{data['Severity']}", f"SIEM_Status:{data['Status']}", f"SIEM_Title:{data['Title']}"]
-    incident_details = ["## Incident Details", data["Description"]]
+    incident_details = ["", "## Incident Details", data["Description"]]
 
     if data.get("Owner"):
         data["Owner"] = json.loads(data["Owner"])
@@ -269,28 +269,28 @@ def sentinel_beautify(blob_path: str):
                 print(e)
             else:
                 if not alert_details:
-                    alert_details += ["## Alert Details", f"The last day of activity is summarised below."]
-                alert_details.append(f"### {alert['AlertName']} (Severity:{alert['AlertSeverity']}) - TimeGenerated {alert['TimeGenerated']}")
+                    alert_details += ["", "## Alert Details", f"The last day of activity is summarised below."]
+                alert_details.append(f"### [{alert['AlertName']} (Severity:{alert['AlertSeverity']}) - TimeGenerated {alert['TimeGenerated']}]({alert['AlertLink']})")
                 alert_details.append(alert["Description"])
                 for key in ["Entities", "ExtendedProperties", "RemediationSteps"]:
                     if alert.get(key):
                         alert[key] = json.loads(alert[key])
                         if alert[key] and isinstance(alert[key], list) and isinstance(alert[key][0], dict):
                             # if list of dicts, make a table
-                            for index, entry in enumerate([flatten(item) for item in alert[key]]):
-                                alert_details.append(f"#### {key}.{index}")
+                            for index, entry in enumerate([flatten(item) for item in alert[key] if len(item.keys()) > 1]):
+                                alert_details += ["", f"#### {key}.{index}"]
                                 for entrykey, value in entry.items():
                                     if value:
                                         alert_details.append(f"- **{entrykey}:** {value}")
                         elif isinstance(alert[key], dict): # if dict display as list
-                            alert_details.append(f"#### {key}")
+                            alert_details += ["", f"#### {key}"]
                             for entrykey, value in alert[key].items():
-                                if value:
+                                if value and len(value) < 200:
                                     alert_details.append(f"- **{entrykey}:** {value}")
-                        else:  # otherwise just add as list of markdown bullets
-                            alert_details.append(f"#### {key}")
-                            for item in alert[key]:
-                                alert_details.append(f"- {item}")
+                                elif value: # break out long blocks
+                                    alert_details += [f"- **{entrykey}:**", "---", value, "", "---"]
+                        else:  # otherwise just add as separate lines
+                            alert_details += ["", f"#### {key}"] + [item for item in alert[key]]
                 alertdata.append(alert)
         data["AlertData"] = alertdata
 
