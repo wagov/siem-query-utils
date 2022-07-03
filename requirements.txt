@@ -4,3 +4,4 @@ fire
 peewee
 markdown
 tabulate
+flatten_json

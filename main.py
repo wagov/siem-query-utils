@@ -8,6 +8,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from string import Template
 from markdown import markdown
+from flatten_json import flatten
+from tabulate import tabulate
 from fire import Fire
 from pathlib import Path
 from subprocess import check_output, run
@@ -206,31 +208,56 @@ def get_datalake_file(path: str):
     return json.loads(result)
 
 
-@app.post("/sentinelBeautify")
-def sentinel_beautify(data: dict = Body(...)):
+@app.get("/sentinelBeautify")
+def sentinel_beautify(blob_path: str):
+    """
+    Takes a SecurityIncident from sentinel, and retreives related alerts and returns markdown, html and detailed json representation.
+    """
+    if blob_path.startswith("/datalake/"):
+        blob_path = blob_path[10:]
+    data = get_datalake_file(blob_path)
     labels = [f"SIEM_Severity:{data['Severity']}", f"SIEM_Status:{data['Status']}", f"SIEM_Title:{data['Title']}"]
-
-    if data.get("Classification"):
-        labels.append(f"SIEM_Classification:{data['Classification']}")
-    if data.get("ClassificationReason"):
-        labels.append(f"SIEM_ClassificationReason:{data['ClassificationReason']}")
-    if data.get("ProviderName"):
-        labels.append(f"SIEM_ProviderName:{data['ProviderName']}")
+    incident_details = ["## Incident Details", data["Description"]]
 
     if data.get("Owner"):
         data["Owner"] = json.loads(data["Owner"])
+        owner = None
         if data["Owner"].get("email"):
-            labels.append(f"SIEM_OwnerEmail:{data['Owner']['email']}")
+            owner = data["Owner"]["email"]
+        elif data["Owner"].get("userPrincipalName"):
+            owner = data["Owner"]["userPrincipalName"]
+        if owner:
+            labels.append(f"SIEM_Owner:{owner}")
+            incident_details.append(f"- **Sentinel Incident Owner:** {owner}")
+
+    if data.get("Classification"):
+        labels.append(f"SIEM_Classification:{data['Classification']}")
+        incident_details.append(f"- **Alert Classification:** {data['Classification']}")
+
+    if data.get("ClassificationReason"):
+        labels.append(f"SIEM_ClassificationReason:{data['ClassificationReason']}")
+        incident_details.append(f"- **Alert Classification Reason:** {data['ClassificationReason']}")
+
+    if data.get("ProviderName"):
+        labels.append(f"SIEM_ProviderName:{data['ProviderName']}")
+        incident_details.append(f"- **Provider Name:** {data['ProviderName']}")
 
     if data.get("AdditionalData"):
         data["AdditionalData"] = json.loads(data["AdditionalData"])
         if data["AdditionalData"].get("alertProductNames"):
-            labels.append(f"SIEM_alertProductNames:{','.join(data['AdditionalData']['alertProductNames'])}")
+            alertProductNames = ",".join(data["AdditionalData"]["alertProductNames"])
+            labels.append(f"SIEM_alertProductNames:{alertProductNames}")
+            incident_details.append(f"- **Product Names:** {alertProductNames}")
         if data["AdditionalData"].get("tactics"):
-            labels.append(f"SIEM_tactics:{','.join(data['AdditionalData']['tactics'])}")
+            tactics = ",".join(data["AdditionalData"]["tactics"])
+            labels.append(f"SIEM_tactics:{tactics}")
+            incident_details.append(f"- **[MITRE ATT&CK Tactics](https://attack.mitre.org/tactics/):** {tactics}")
         if data["AdditionalData"].get("techniques"):
-            labels.append(f"SIEM_techniques:{','.join(data['AdditionalData']['techniques'])}")
+            techniques = ",".join(data["AdditionalData"]["techniques"])
+            labels.append(f"SIEM_techniques:{techniques}")
+            incident_details.append(f"- **[MITRE ATT&CK Techniques](https://attack.mitre.org/techniques/):** {techniques}")
 
+    alert_details = []
     if data.get("AlertIds") and datalake_blob_prefix:
         data["AlertIds"] = json.loads(data["AlertIds"])
         alertdata = []
@@ -242,22 +269,45 @@ def sentinel_beautify(data: dict = Body(...)):
             except Exception as e:  # alert may not exist on day of last activity time
                 print(e)
             else:
-                try:
-                    alert["Entities"] = json.loads(alert.get("Entities", "null"))
-                    alert["ExtendedProperties"] = json.loads(alert.get("ExtendedProperties", "null"))
-                    alert["RemediationSteps"] = json.loads(alert.get("RemediationSteps", "null"))
-                    alertdata.append(alert)
-                except Exception as e:
-                    print(e)
+                if not alert_details:
+                    alert_details += ["## Alert Details", f"The last day of activity is summarised below."]
+                alert_details.append(f"### {alert['AlertName']} (Severity:{alert['AlertSeverity']}) - TimeGenerated {alert['TimeGenerated']}")
+                alert_details.append(alert["Description"])
+                for key in ["Entities", "ExtendedProperties", "RemediationSteps"]:
+                    if alert.get(key):
+                        alert[key] = json.loads(alert[key])
+                        if alert[key] and isinstance(alert[key], list) and isinstance(alert[key][0], dict):
+                            # if list of dicts, make a table
+                            for index, entry in enumerate([flatten(item) for item in alert[key]]):
+                                alert_details.append(f"#### {key}.{index}")
+                                for entrykey, value in entry.items():
+                                    if value:
+                                        alert_details.append(f"- **{entrykey}:** {value}")
+                        elif isinstance(alert[key], dict): # if dict display as list
+                            alert_details.append(f"#### {key}")
+                            for entrykey, value in alert[key].items():
+                                if value:
+                                    alert_details.append(f"- **{entrykey}:** {value}")
+                        else:  # otherwise just add as list of markdown bullets
+                            alert_details.append(f"#### {key}")
+                            for item in alert[key]:
+                                alert_details.append(f"- {item}")
+                alertdata.append(alert)
         data["AlertData"] = alertdata
 
     urlhash = hashlib.new("sha256")
     urlhash.update(data["IncidentUrl"].encode("utf-8"))
     urlhash = urlhash.hexdigest()
-    subject = f"Sentinel Detection - {data['Title']} ({data['Status']}) - urlhash:{urlhash}"
-    mdtext = f"# Sentinel Detection - {data['Title']} ({data['Status']})\n"
-    mdtext += f"Sentinel Incident: [{data['IncidentNumber']}]({data['IncidentUrl']})\n"
-
+    subject = f"Sentinel Detection - {data['Title']} (Status:{data['Status']}) - urlhash:{urlhash}"
+    mdtext = (
+        [
+            f"# Sentinel Detection - {data['Title']} ({data['Status']})",
+            f"[SecurityIncident #{data['IncidentNumber']}]({data['IncidentUrl']})",
+        ]
+        + incident_details
+        + alert_details
+    )
+    mdtext = "\n".join(mdtext)
     footer = os.environ.get("FOOTER_HTML", "Set FOOTER_HTML env var to configure this...")
     content = markdown(mdtext, extensions=["tables"])
     html = email_template.substitute(title=subject, content=content, footer=footer)
