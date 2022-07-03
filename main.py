@@ -216,7 +216,7 @@ def sentinel_beautify(blob_path: str):
         blob_path = blob_path[10:]
     data = get_datalake_file(blob_path)
     labels = [f"SIEM_Severity:{data['Severity']}", f"SIEM_Status:{data['Status']}", f"SIEM_Title:{data['Title']}"]
-    incident_details = ["", "## Incident Details", data["Description"]]
+    incident_details = ["", "## Incident Details", data["Description"], ""]
 
     if data.get("Owner"):
         data["Owner"] = json.loads(data["Owner"])
@@ -288,7 +288,7 @@ def sentinel_beautify(blob_path: str):
                                 if value and len(value) < 200:
                                     alert_details.append(f"- **{entrykey}:** {value}")
                                 elif value: # break out long blocks
-                                    alert_details += [f"- **{entrykey}:**", "---", value, "", "---"]
+                                    alert_details += [f"- **{entrykey}:**", "```", value, "", "```"]
                         else:  # otherwise just add as separate lines
                             alert_details += ["", f"#### {key}"] + [item for item in alert[key]]
                 alertdata.append(alert)
