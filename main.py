@@ -270,7 +270,9 @@ def sentinel_beautify(blob_path: str):
             else:
                 if not alert_details:
                     alert_details += ["", "## Alert Details", f"The last day of activity is summarised below."]
-                alert_details.append(f"### [{alert['AlertName']} (Severity:{alert['AlertSeverity']}) - TimeGenerated {alert['TimeGenerated']}]({alert['AlertLink']})")
+                alert_details.append(
+                    f"### [{alert['AlertName']} (Severity:{alert['AlertSeverity']}) - TimeGenerated {alert['TimeGenerated']}]({alert['AlertLink']})"
+                )
                 alert_details.append(alert["Description"])
                 for key in ["Entities", "ExtendedProperties", "RemediationSteps"]:
                     if alert.get(key):
@@ -282,12 +284,12 @@ def sentinel_beautify(blob_path: str):
                                 for entrykey, value in entry.items():
                                     if value:
                                         alert_details.append(f"- **{entrykey}:** {value}")
-                        elif isinstance(alert[key], dict): # if dict display as list
+                        elif isinstance(alert[key], dict):  # if dict display as list
                             alert_details += ["", f"#### {key}"]
                             for entrykey, value in alert[key].items():
                                 if value and len(value) < 200:
                                     alert_details.append(f"- **{entrykey}:** {value}")
-                                elif value: # break out long blocks
+                                elif value:  # break out long blocks
                                     alert_details += [f"- **{entrykey}:**", "", "```", value, "```", ""]
                         else:  # otherwise just add as separate lines
                             alert_details += ["", f"#### {key}"] + [item for item in alert[key]]
@@ -297,10 +299,11 @@ def sentinel_beautify(blob_path: str):
     urlhash = hashlib.new("sha256")
     urlhash.update(data["IncidentUrl"].encode("utf-8"))
     urlhash = urlhash.hexdigest()
-    subject = f"Sentinel Detection - {data['Title']} (Status:{data['Status']}) - urlhash:{urlhash}"
+    title = f"SIEM Detection (Severity:{data['Severity']}) - {data['Title']} (Status:{data['Status']})"
+    subject = f"{title} - urlhash:{urlhash}"
     mdtext = (
         [
-            f"# Sentinel Detection - {data['Title']} ({data['Status']})",
+            f"# {title}",
             f"[SecurityIncident #{data['IncidentNumber']}]({data['IncidentUrl']})",
         ]
         + incident_details
