@@ -20,6 +20,7 @@ from sqlitecache import cache, Workspace
 
 secret_api_token = os.environ.get("API_TOKEN")
 datalake_blob_prefix = os.environ.get("DATALAKE_BLOB_PREFIX")
+email_footer = os.environ.get("FOOTER_HTML", "Set FOOTER_HTML env var to configure this...")
 os.environ["AZURE_STORAGE_AUTH_MODE"] = "login"
 
 app = FastAPI(title="SIEM Query Utils")
@@ -216,7 +217,7 @@ def sentinel_beautify(blob_path: str):
         blob_path = blob_path[10:]
     data = get_datalake_file(blob_path)
     labels = [f"SIEM_Severity:{data['Severity']}", f"SIEM_Status:{data['Status']}", f"SIEM_Title:{data['Title']}"]
-    incident_details = ["", "## Incident Details", data["Description"], ""]
+    incident_details = [data["Description"], ""]
 
     if data.get("Owner"):
         data["Owner"] = json.loads(data["Owner"])
@@ -304,15 +305,16 @@ def sentinel_beautify(blob_path: str):
     mdtext = (
         [
             f"# {title}",
-            f"[SecurityIncident #{data['IncidentNumber']}]({data['IncidentUrl']})",
+            "",
+            f"## [SecurityIncident #{data['IncidentNumber']} Details]({data['IncidentUrl']})",
+            "",
         ]
         + incident_details
         + alert_details
     )
     mdtext = "\n".join(mdtext)
-    footer = os.environ.get("FOOTER_HTML", "Set FOOTER_HTML env var to configure this...")
     content = markdown(mdtext, extensions=["tables"])
-    html = email_template.substitute(title=subject, content=content, footer=footer)
+    html = email_template.substitute(title=subject, content=content, footer=email_footer)
 
     response = {
         "subject": subject,
