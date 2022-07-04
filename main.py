@@ -257,6 +257,11 @@ def sentinel_beautify(blob_path: str):
             labels.append(f"SIEM_techniques:{techniques}")
             incident_details.append(f"- **[MITRE ATT&CK Techniques](https://attack.mitre.org/techniques/):** {techniques}")
 
+    comments = []
+    if data.get("Comments"):
+        data["Comments"] = json.loads(data["Comments"])
+        comments += ["", "## Comments"] + [comment for comment in data["Comments"]] + [""]
+
     alert_details = []
     if data.get("AlertIds") and datalake_blob_prefix:
         data["AlertIds"] = json.loads(data["AlertIds"])
@@ -306,6 +311,7 @@ def sentinel_beautify(blob_path: str):
             "",
         ]
         + incident_details
+        + comments
         + alert_details
     )
     mdtext = "\n".join(mdtext)
