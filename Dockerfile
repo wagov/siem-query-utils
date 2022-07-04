@@ -19,4 +19,4 @@ COPY . ./
 
 EXPOSE 80 443
 
-CMD ["bash", "-c", "uvicorn main:app & caddy reverse-proxy --from ${FQDN} --to 127.0.0.1:8000"]
+CMD ["bash", "-c", "gunicorn -w 4 -k uvicorn.workers.UvicornH11Worker main:app & caddy reverse-proxy --from ${FQDN} --to 127.0.0.1:8000"]
