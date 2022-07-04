@@ -297,11 +297,7 @@ def sentinel_beautify(blob_path: str):
                 alertdata.append(alert)
         data["AlertData"] = alertdata
 
-    urlhash = hashlib.new("sha256")
-    urlhash.update(data["IncidentUrl"].encode("utf-8"))
-    urlhash = urlhash.hexdigest()
-    title = f"SIEM Detection (Severity:{data['Severity']}) - {data['Title']} (Status:{data['Status']})"
-    subject = f"{title} - urlhash:{urlhash}"
+    title = f"SIEM Detection #{data['IncidentNumber']} Sev:{data['Severity']} - {data['Title']} (Status:{data['Status']})"
     mdtext = (
         [
             f"# {title}",
@@ -314,14 +310,13 @@ def sentinel_beautify(blob_path: str):
     )
     mdtext = "\n".join(mdtext)
     content = markdown(mdtext, extensions=["tables"])
-    html = email_template.substitute(title=subject, content=content, footer=email_footer)
+    html = email_template.substitute(title=title, content=content, footer=email_footer)
 
     response = {
-        "subject": subject,
+        "subject": title,
         "html": html,
         "markdown": mdtext,
         "labels": labels,
-        "urlhash": urlhash,
         "sentinel_data": data,
     }
     return response
