@@ -322,7 +322,7 @@ def sentinel_beautify(blob_path: str):
         "subject": title,
         "html": html,
         "markdown": mdtext,
-        "labels": labels,
+        "labels": [label.replace(" ", "") for label in labels],
         "sentinel_data": data,
     }
     return response
