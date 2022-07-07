@@ -314,7 +314,7 @@ def sentinel_beautify(blob_path: str):
         + comments
         + alert_details
     )
-    mdtext = "\n".join(mdtext)
+    mdtext = "\n".join([str(line) for line in mdtext])
     content = markdown(mdtext, extensions=["tables"])
     html = email_template.substitute(title=title, content=content, footer=email_footer)
 
