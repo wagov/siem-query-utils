@@ -15,7 +15,8 @@ docker run -it -v $(pwd):/app -p 8000:8000 ghcr.io/wagov/siem-query-utils bash
 az login --tenant $TENANT_ID
 # follow auth prompts
 ./main.py debug
-# open http://localhost:8000 in your browser
 ```
+After running the above you can open http://localhost:8000/docs in your browser to get to the swagger debug ui which lets you test all the endpoints.
+
 
 You can also build and test the container locally using `docker build -t <localname>; docker run -it -v $(pwd):/app -p 8000:8000 <localname>`
