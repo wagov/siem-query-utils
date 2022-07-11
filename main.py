@@ -306,7 +306,7 @@ def sentinel_beautify(blob_path: str):
                                 if "Type" in entity:
                                     observable = {
                                         "type": entity["Type"],
-                                        "value": entity_type_value_mappings.get(entity["Type"], False).format_map(Default(entity))
+                                        "value": entity_type_value_mappings.get(entity["Type"], "").format_map(Default(entity))
                                     }
                                 if not observable["value"]: # dump whole dict as string if no mapping found
                                     observable["value"] = repr(entity)
