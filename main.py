@@ -202,6 +202,8 @@ email_template = Template(open("templates/email-template.html").read())
 
 
 def get_datalake_file(path: str):
+    if not datalake_blob_prefix:
+        raise Exception("Please set DATALAKE_BLOB_PREFIX env var")
     url = f"{datalake_blob_prefix}/{path}"
     cmd = ["az", "storage", "blob", "download", "--blob-url", url, "-f", "/dev/stdout", "--max-connections", "1", "--no-progress", "-o", "none"]
     result = check_output(cmd)
@@ -263,19 +265,35 @@ def sentinel_beautify(blob_path: str):
         comments += ["", "## Comments"] + [comment for comment in data["Comments"]] + [""]
 
     alert_details = []
+    observables = []
+    entity_type_value_mappings = {
+        "host": "{HostName}",
+        "account": "{Name}",
+        "process": "{CommandLine}",
+        "file": "{Name}",
+        "ip": "{Address}",
+        "url": "{Url}",
+        "dns": "{DomainName}",
+        "registry-key": "{Hive}{Key}",
+        "filehash": "{Algorithm}{Value}"
+    }
+    class Default(dict):
+        def __missing__(self, key):
+            return key
     if data.get("AlertIds") and datalake_blob_prefix:
         data["AlertIds"] = json.loads(data["AlertIds"])
         alertdata = []
-        for alertid in data["AlertIds"]:
+        for alertid in reversed(data["AlertIds"]): # walk alerts from newest to oldest
             # below should be able to find all the alerts from the latest day of activity
             try:
                 url = f"sentinel_outputs/alerts/{data['LastActivityTime'].split('T')[0]}/{data['TenantId']}_{alertid}.json"
                 alert = get_datalake_file(url)
             except Exception as e:  # alert may not exist on day of last activity time
                 print(e)
+                break
             else:
                 if not alert_details:
-                    alert_details += ["", "## Alert Details", f"The last day of activity is summarised below."]
+                    alert_details += ["", "## Alert Details", f"The last day of activity is summarised below from newest to oldest."]
                 alert_details.append(
                     f"### [{alert['AlertName']} (Severity:{alert['AlertSeverity']}) - TimeGenerated {alert['TimeGenerated']}]({alert['AlertLink']})"
                 )
@@ -283,6 +301,16 @@ def sentinel_beautify(blob_path: str):
                 for key in ["Entities", "ExtendedProperties", "RemediationSteps"]:
                     if alert.get(key):
                         alert[key] = json.loads(alert[key])
+                        if key == "Entities": # add the entity to our list of observables
+                            for entity in alert[key]:
+                                if "Type" in entity:
+                                    observable = {
+                                        "type": entity["Type"],
+                                        "value": entity_type_value_mappings.get(entity["Type"], False).format_map(Default(entity))
+                                    }
+                                if not observable["value"]: # dump whole dict as string if no mapping found
+                                    observable["value"] = repr(entity)
+                                observables.append(observable)
                         if alert[key] and isinstance(alert[key], list) and isinstance(alert[key][0], dict):
                             # if list of dicts, make a table
                             for index, entry in enumerate([flatten(item) for item in alert[key] if len(item.keys()) > 1]):
@@ -323,6 +351,7 @@ def sentinel_beautify(blob_path: str):
         "html": html,
         "markdown": mdtext,
         "labels": [label.replace(" ", "") for label in labels],
+        "observables": observables,
         "sentinel_data": data,
     }
     return response
