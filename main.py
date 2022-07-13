@@ -215,10 +215,13 @@ def sentinel_beautify(blob_path: str):
     """
     Takes a SecurityIncident from sentinel, and retreives related alerts and returns markdown, html and detailed json representation.
     """
-    if blob_path.startswith("/datalake/"):
-        blob_path = blob_path[10:]
+    valid_prefix = "/datalake/sentinel_outputs/incidents"
+    if not blob_path.startswith(valid_prefix):
+        return f"Blob path must start with {valid_prefix}"
+    blob_path = blob_path[10:]  # strip leading datalake
     data = get_datalake_file(blob_path)
     labels = [f"SIEM_Severity:{data['Severity']}", f"SIEM_Status:{data['Status']}", f"SIEM_Title:{data['Title']}"]
+    labels += [l["labelName"] for l in json.loads(data["Labels"])]  # copy over labels from incident
     incident_details = [data["Description"], ""]
 
     if data.get("Owner"):
@@ -275,15 +278,17 @@ def sentinel_beautify(blob_path: str):
         "url": "{Url}",
         "dns": "{DomainName}",
         "registry-key": "{Hive}{Key}",
-        "filehash": "{Algorithm}{Value}"
+        "filehash": "{Algorithm}{Value}",
     }
+
     class Default(dict):
         def __missing__(self, key):
             return key
+
     if data.get("AlertIds") and datalake_blob_prefix:
         data["AlertIds"] = json.loads(data["AlertIds"])
         alertdata = []
-        for alertid in reversed(data["AlertIds"]): # walk alerts from newest to oldest
+        for alertid in reversed(data["AlertIds"]):  # walk alerts from newest to oldest
             # below should be able to find all the alerts from the latest day of activity
             try:
                 url = f"sentinel_outputs/alerts/{data['LastActivityTime'].split('T')[0]}/{data['TenantId']}_{alertid}.json"
@@ -301,14 +306,14 @@ def sentinel_beautify(blob_path: str):
                 for key in ["Entities", "ExtendedProperties", "RemediationSteps"]:
                     if alert.get(key):
                         alert[key] = json.loads(alert[key])
-                        if key == "Entities": # add the entity to our list of observables
+                        if key == "Entities":  # add the entity to our list of observables
                             for entity in alert[key]:
                                 if "Type" in entity:
                                     observable = {
                                         "type": entity["Type"],
-                                        "value": entity_type_value_mappings.get(entity["Type"], "").format_map(Default(entity))
+                                        "value": entity_type_value_mappings.get(entity["Type"], "").format_map(Default(entity)),
                                     }
-                                if not observable["value"]: # dump whole dict as string if no mapping found
+                                if not observable["value"]:  # dump whole dict as string if no mapping found
                                     observable["value"] = repr(entity)
                                 observables.append(observable)
                         if alert[key] and isinstance(alert[key], list) and isinstance(alert[key][0], dict):
@@ -345,12 +350,14 @@ def sentinel_beautify(blob_path: str):
     mdtext = "\n".join([str(line) for line in mdtext])
     content = markdown(mdtext, extensions=["tables"])
     html = email_template.substitute(title=title, content=content, footer=email_footer)
+    # remove special chars and deduplicate labels
+    labels = set("".join(c for c in label if c.isalnum() or c in ".:_") for label in labels)
 
     response = {
         "subject": title,
         "html": html,
         "markdown": mdtext,
-        "labels": [label.replace(" ", "") for label in labels],
+        "labels": list(labels),
         "observables": [dict(ts) for ts in set(tuple(i.items()) for i in observables)],
         "sentinel_data": data,
     }
