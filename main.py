@@ -265,7 +265,10 @@ def sentinel_beautify(blob_path: str):
     comments = []
     if data.get("Comments"):
         data["Comments"] = json.loads(data["Comments"])
-        comments += ["", "## Comments"] + [comment for comment in data["Comments"]] + [""]
+        comments += ["", "## Comments"]
+        for comment in data["Comments"]:
+            comments += comment["message"].split("\n")
+        comments += [""]
 
     alert_details = []
     observables = []
