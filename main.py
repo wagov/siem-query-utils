@@ -306,7 +306,7 @@ def sentinel_beautify(blob_path: str):
                     f"### [{alert['AlertName']} (Severity:{alert['AlertSeverity']}) - TimeGenerated {alert['TimeGenerated']}]({alert['AlertLink']})"
                 )
                 alert_details.append(alert["Description"])
-                for key in ["Entities", "ExtendedProperties", "RemediationSteps"]:
+                for key in ["RemediationSteps", "ExtendedProperties", "Entities"]: # entities last as may get truncated
                     if alert.get(key):
                         alert[key] = json.loads(alert[key])
                         if key == "Entities":  # add the entity to our list of observables
