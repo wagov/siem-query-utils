@@ -265,10 +265,11 @@ def sentinel_beautify(blob_path: str):
     comments = []
     if data.get("Comments"):
         data["Comments"] = json.loads(data["Comments"])
-        comments += ["", "## Comments"]
-        for comment in data["Comments"]:
-            comments += comment["message"].split("\n")
-        comments += [""]
+        if len(data["Comments"]) > 0:
+            comments += ["", "## Comments"]
+            for comment in data["Comments"]:
+                comments += comment["message"].split("\n")
+            comments += [""]
 
     alert_details = []
     observables = []
@@ -291,7 +292,7 @@ def sentinel_beautify(blob_path: str):
     if data.get("AlertIds") and datalake_blob_prefix:
         data["AlertIds"] = json.loads(data["AlertIds"])
         alertdata = []
-        for alertid in reversed(data["AlertIds"]):  # walk alerts from newest to oldest
+        for alertid in reversed(data["AlertIds"]):  # walk alerts from newest to oldest, max 10
             # below should be able to find all the alerts from the latest day of activity
             try:
                 url = f"sentinel_outputs/alerts/{data['LastActivityTime'].split('T')[0]}/{data['TenantId']}_{alertid}.json"
@@ -301,7 +302,7 @@ def sentinel_beautify(blob_path: str):
                 break
             else:
                 if not alert_details:
-                    alert_details += ["", "## Alert Details", f"The last day of activity is summarised below from newest to oldest."]
+                    alert_details += ["", "## Alert Details", f"The last day of activity (up to 20 alerts) is summarised below from newest to oldest."]
                 alert_details.append(
                     f"### [{alert['AlertName']} (Severity:{alert['AlertSeverity']}) - TimeGenerated {alert['TimeGenerated']}]({alert['AlertLink']})"
                 )
@@ -336,6 +337,9 @@ def sentinel_beautify(blob_path: str):
                         else:  # otherwise just add as separate lines
                             alert_details += ["", f"#### {key}"] + [item for item in alert[key]]
                 alertdata.append(alert)
+                if len(alertdata) >= 20:
+                    # limit max number of alerts retreived
+                    break
         data["AlertData"] = alertdata
 
     title = f"SIEM Detection #{data['IncidentNumber']} Sev:{data['Severity']} - {data['Title']} (Status:{data['Status']})"
