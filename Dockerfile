@@ -1,5 +1,5 @@
 # Prepare the base environment.
-FROM mcr.microsoft.com/azure-cli:2.37.0
+FROM mcr.microsoft.com/azure-cli:2.39.0
 MAINTAINER cybersecurity@dpc.wa.gov.au
 LABEL org.opencontainers.image.source https://github.com/wagov/siem-query-utils
 
