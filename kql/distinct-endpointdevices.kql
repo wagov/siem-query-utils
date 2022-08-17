@@ -1,0 +1,2 @@
+DeviceInfo
+| summarize dcount(DeviceId) by OSPlatform, TenantId

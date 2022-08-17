@@ -1,0 +1,5 @@
+IdentityLogonEvents
+| summarize dcount(AccountObjectId) by Protocol, Application, TenantId
+| extend App = trim(" ", strcat(Application, " ", Protocol))
+| project-away Protocol, Application
+| order by dcount_AccountObjectId

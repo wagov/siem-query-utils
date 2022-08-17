@@ -1,0 +1,3 @@
+SigninLogs 
+| summarize dcount(UserPrincipalName) by AuthenticationRequirement, TenantId
+| order by dcount_UserPrincipalName
