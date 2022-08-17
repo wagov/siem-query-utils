@@ -1,2 +1,3 @@
 DeviceInfo
+| summarize OSPlatform = max(OSPlatform) by DeviceId, TenantId
 | summarize dcount(DeviceId) by OSPlatform, TenantId

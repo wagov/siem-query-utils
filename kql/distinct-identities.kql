@@ -1,4 +1,5 @@
 IdentityLogonEvents
+| where ActionType == "LogonSuccess"
 | summarize dcount(AccountObjectId) by Protocol, Application, TenantId
 | extend App = trim(" ", strcat(Application, " ", Protocol))
 | project-away Protocol, Application

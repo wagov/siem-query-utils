@@ -1,3 +1,4 @@
 SigninLogs 
-| summarize dcount(UserPrincipalName) by AuthenticationRequirement, TenantId
+| where ResultType == 0
+| summarize dcount(UserPrincipalName), dcount(AppId) by AuthenticationRequirement, TenantId
 | order by dcount_UserPrincipalName

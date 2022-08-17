@@ -1,0 +1,4 @@
+SigninLogs 
+| where ResultType == 0
+| summarize dcount(UserPrincipalName) by strcat(ClientAppUsed, ": ", AppDisplayName), AuthenticationRequirement, TenantId
+| order by dcount_UserPrincipalName
