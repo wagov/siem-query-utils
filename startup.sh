@@ -1,0 +1,1 @@
+gunicorn -b 0.0.0.0 -w 4 -k uvicorn.workers.UvicornH11Worker main:app
