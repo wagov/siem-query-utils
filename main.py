@@ -1,24 +1,23 @@
 #!/usr/bin/env python3
 import json
 import os
-import hashlib
-from pkgutil import get_data
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from string import Template
 from markdown import markdown
 from flatten_json import flatten
+from collections import namedtuple
 from fire import Fire
-from pathlib import Path
 from subprocess import check_output, run
 from dateutil.parser import isoparse
+from cacheout import Cache
 
-from fastapi import FastAPI, Response, Body, Request, BackgroundTasks
+from fastapi import FastAPI, BackgroundTasks
 
-from sqlitecache import cache, Workspace
+Workspace = namedtuple("Workspace", "subscription, customerId, resourceGroup, name")
+cache = Cache(maxsize=25600, ttl=300)
 
-secret_api_token = os.environ.get("API_TOKEN")
 datalake_blob_prefix = os.environ.get("DATALAKE_BLOB_PREFIX")
 email_footer = os.environ.get("FOOTER_HTML", "Set FOOTER_HTML env var to configure this...")
 os.environ["AZURE_STORAGE_AUTH_MODE"] = "login"
@@ -26,20 +25,7 @@ os.environ["AZURE_STORAGE_AUTH_MODE"] = "login"
 app = FastAPI(title="SIEM Query Utils")
 
 
-@app.middleware("http")
-async def authenticate_request(request: Request, call_next):
-    # Middleware to do a simple check of api token vs secure env var
-    auth_token = request.query_params.get("auth_token", request.cookies.get("auth_token", "DEBUG"))
-    if auth_token not in [secret_api_token]:
-        response = Response(content="Invalid auth_token", status_code=403, media_type="text/plain")
-    else:
-        response = await call_next(request)
-        if request.cookies.get("auth_token") != auth_token:
-            response.set_cookie("auth_token", auth_token)  # persist auth in a cookie
-    return response
-
-
-@cache()
+@cache.memoize(ttl=60)
 def azcli(cmd: list):
     "Run a general azure cli cmd"
     cmd = ["az"] + cmd + ["--only-show-errors", "-o", "json"]
@@ -94,7 +80,7 @@ def analytics_query(workspaces: list, query: str, timespan: str = "P7D", outputf
 
 
 @app.get("/listWorkspaces")
-@cache(seconds=60 * 60 * 3)  # 3 hr cache
+@cache.memoize(ttl=60 * 60 * 3)  # 3 hr cache
 def list_workspaces():
     "Get sentinel workspaces as a list of named tuples"
     workspaces = azcli(["graph", "query", "-q", loadkql("kql/graph-workspaces.kql"), "--first", "1000", "--query", "data[]"])
@@ -307,7 +293,7 @@ def sentinel_beautify(blob_path: str):
                     f"### [{alert['AlertName']} (Severity:{alert['AlertSeverity']}) - TimeGenerated {alert['TimeGenerated']}]({alert['AlertLink']})"
                 )
                 alert_details.append(alert["Description"])
-                for key in ["RemediationSteps", "ExtendedProperties", "Entities"]: # entities last as may get truncated
+                for key in ["RemediationSteps", "ExtendedProperties", "Entities"]:  # entities last as may get truncated
                     if alert.get(key):
                         alert[key] = json.loads(alert[key])
                         if key == "Entities":  # add the entity to our list of observables
@@ -377,7 +363,6 @@ def debug_server():
 
     azcli(["extension", "add", "-n", "log-analytics", "-y"])
     azcli(["extension", "add", "-n", "resource-graph", "-y"])
-    os.environ["API_TOKEN"] = "DEBUG"
     uvicorn.run("main:app", host="0.0.0.0", port=8000, log_level="debug", reload=True)
 
 
@@ -391,5 +376,3 @@ if __name__ == "__main__":
             "debug": debug_server,
         }
     )
-elif not secret_api_token or secret_api_token == "changeme":
-    exit("Please set API_TOKEN env var to run web server")
