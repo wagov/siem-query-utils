@@ -12,6 +12,7 @@ from fire import Fire
 from subprocess import check_output, run
 from dateutil.parser import isoparse
 from cacheout import Cache
+from pathvalidate import sanitize_filepath
 
 from fastapi import FastAPI, BackgroundTasks
 
@@ -22,7 +23,6 @@ datalake_blob_prefix = os.environ.get("DATALAKE_BLOB_PREFIX")
 email_footer = os.environ.get("FOOTER_HTML", "Set FOOTER_HTML env var to configure this...")
 os.environ["AZURE_STORAGE_AUTH_MODE"] = "login"
 
-
 app = FastAPI()
 api = FastAPI(title="SIEM Query Utils")
 app.mount("/api/v1", api)
@@ -31,7 +31,10 @@ app.mount("/api/v1", api)
 def azcli(cmd: list):
     "Run a general azure cli cmd"
     cmd = ["az"] + cmd + ["--only-show-errors", "-o", "json"]
-    result = check_output(cmd)
+    try:
+        result = check_output(cmd)
+    except Exception as e:
+        return {"error": repr(e)}
     if not result:
         return None
     return json.loads(result)
@@ -49,11 +52,9 @@ if os.environ.get("IDENTITY_HEADER"):
 
 
 def loadkql(query):
-    "If query starts with https: or kql/ then load it from url or local file and return text"
+    "If query starts with kql/ then load it from a local file and return text"
     if query.startswith("kql/"):
-        query = open(query).read().encode("utf-8").strip()
-    elif query.startswith("https:"):
-        query = check_output(["curl", "-L", query]).decode("utf-8").strip()
+        query = open(sanitize_filepath(query)).read().encode("utf-8").strip()
     return query
 
 
@@ -111,7 +112,7 @@ def simple_query(query: str, name: str, timespan: str = "P7D"):
 
 def upload_results(results, blobdest, filenamekeys):
     "Uploads a list of json results as individual files split by timegenerated to a blob destination"
-    account, dest = blobdest.split("/", 1)
+    account, dest = sanitize_filepath(blobdest).split("/", 1)
     with tempfile.TemporaryDirectory() as tmpdir:
         dirnames = set()
         for result in results:
@@ -173,7 +174,7 @@ def global_stats(
     results = analytics_query([ws.customerId for ws in list_workspaces()], query, timespan)
     if blobdest != "":
         blobdest = blobdest.format(querydate=datetime.now().date().isoformat())
-        account, dest = blobdest.split("/", 1)
+        account, dest = sanitize_filepath(blobdest).split("/", 1)
         with tempfile.NamedTemporaryFile(mode="w") as uploadjson:
             json.dump(results, uploadjson, sort_keys=True, indent=2)
             uploadjson.flush()
@@ -192,6 +193,7 @@ email_template = Template(open("templates/email-template.html").read())
 def get_datalake_file(path: str):
     if not datalake_blob_prefix:
         raise Exception("Please set DATALAKE_BLOB_PREFIX env var")
+    path = sanitize_filepath(path)
     url = f"{datalake_blob_prefix}/{path}"
     cmd = ["az", "storage", "blob", "download", "--blob-url", url, "-f", "/dev/stdout", "--max-connections", "1", "--no-progress", "-o", "none"]
     result = check_output(cmd)
