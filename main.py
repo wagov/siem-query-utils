@@ -22,8 +22,10 @@ datalake_blob_prefix = os.environ.get("DATALAKE_BLOB_PREFIX")
 email_footer = os.environ.get("FOOTER_HTML", "Set FOOTER_HTML env var to configure this...")
 os.environ["AZURE_STORAGE_AUTH_MODE"] = "login"
 
-app = FastAPI(title="SIEM Query Utils")
 
+app = FastAPI()
+api = FastAPI(title="SIEM Query Utils")
+app.mount("/api/v1", api)
 
 @cache.memoize(ttl=60)
 def azcli(cmd: list):
@@ -79,7 +81,7 @@ def analytics_query(workspaces: list, query: str, timespan: str = "P7D", outputf
     return results
 
 
-@app.get("/listWorkspaces")
+@api.get("/listWorkspaces")
 @cache.memoize(ttl=60 * 60 * 3)  # 3 hr cache
 def list_workspaces():
     "Get sentinel workspaces as a list of named tuples"
@@ -99,7 +101,7 @@ def list_workspaces():
     return sorted(list(sentinelworkspaces))
 
 
-@app.get("/simpleQuery")
+@api.get("/simpleQuery")
 def simple_query(query: str, name: str, timespan: str = "P7D"):
     "Find first workspace matching name, then run a kusto query against it"
     for workspace in list_workspaces():
@@ -139,7 +141,7 @@ def upload_results(results, blobdest, filenamekeys):
         run(cmd)
 
 
-@app.get("/globalQuery")
+@api.get("/globalQuery")
 def global_query(query: str, tasks: BackgroundTasks, timespan: str = "P7D", count: bool = False, blobdest: str = "", filenamekeys: str = ""):
     """
     Query all workspaces with SecurityIncident tables using kusto.
@@ -156,7 +158,7 @@ def global_query(query: str, tasks: BackgroundTasks, timespan: str = "P7D", coun
         return results
 
 
-@app.get("/globalStats")
+@api.get("/globalStats")
 def global_stats(
     query: str,
     timespan: str = "P7D",
@@ -196,7 +198,7 @@ def get_datalake_file(path: str):
     return json.loads(result)
 
 
-@app.get("/sentinelBeautify")
+@api.get("/sentinelBeautify")
 def sentinel_beautify(blob_path: str):
     """
     Takes a SecurityIncident from sentinel, and retreives related alerts and returns markdown, html and detailed json representation.
