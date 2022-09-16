@@ -1,11 +1,11 @@
 # siem-query-utils
 General utilities for querying SIEMs developed using [FastAPI](https://fastapi.tiangolo.com/) built ontop of [azure-functions/python:4-python3.10](https://mcr.microsoft.com/en-us/product/azure-functions/python/about). This container supports direct execution using [python-fire](https://github.com/google/python-fire), a local webserver run on [gunicorn](startup.sh) or a serverless [Azure Function](https://docs.microsoft.com/en-us/azure/azure-functions/functions-overview).
 
-High cost functions are cached using [cacheout](https://github.com/dgilland/cacheout) which significantly improves performance when running long lived instances such as [Dedicated hosting plans for Azure Functions](https://docs.microsoft.com/en-us/azure/azure-functions/dedicated-plan) by defaulting to caching all azure cli calls in memory for 5 minutes.
+High cost functions are cached using [cacheout](https://github.com/dgilland/cacheout) which significantly improves performance when running long lived instances such as [Dedicated hosting plans for Azure Functions](https://docs.microsoft.com/en-us/azure/azure-functions/dedicated-plan) by defaulting to caching all [azure cli](https://pypi.org/project/azure-cli/) calls in memory for 5 minutes.
 
 ## Usage
 
-The functions intended to be hosted using a serverless runtime such as [Azure Functions (Custom Linux Image)](https://docs.microsoft.com/en-us/azure/azure-functions/functions-create-function-linux-custom-image?tabs=in-process%2Cbash%2Cazure-cli&pivots=programming-language-other#create-and-configure-a-function-app-on-azure-with-the-image)
+The functions intended to be hosted using a serverless runtime such as [Azure Functions (Custom Linux Image)](https://docs.microsoft.com/en-us/azure/azure-functions/functions-create-function-linux-custom-image?tabs=in-process%2Cbash%2Cazure-cli&pivots=programming-language-other#create-and-configure-a-function-app-on-azure-with-the-image). A [Managed Identity](https://docs.microsoft.com/en-us/azure/app-service/overview-managed-identity) is required to be configured to ensure the container can login to the [Azure CLI](https://docs.microsoft.com/en-us/cli/azure/authenticate-azure-cli#sign-in-with-a-managed-identity).
 
 ```bash
 # Azure CLI quickstart
