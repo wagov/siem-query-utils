@@ -5,7 +5,7 @@ High cost functions are cached using [cacheout](https://github.com/dgilland/cach
 
 ## Usage
 
-The functions intended to be hosted using a serverless runtime such as [Azure Functions (Custom Linux Image)](https://docs.microsoft.com/en-us/azure/azure-functions/functions-create-function-linux-custom-image?tabs=in-process%2Cbash%2Cazure-cli&pivots=programming-language-other#create-and-configure-a-function-app-on-azure-with-the-image). A [Managed Identity](https://docs.microsoft.com/en-us/azure/app-service/overview-managed-identity) is required to be configured to ensure the container can login to the [Azure CLI](https://docs.microsoft.com/en-us/cli/azure/authenticate-azure-cli#sign-in-with-a-managed-identity).
+The [container image](https://github.com/wagov/siem-query-utils/pkgs/container/siem-query-utils) is intended to be hosted using a serverless runtime such as [Azure Functions (Custom Linux Image)](https://docs.microsoft.com/en-us/azure/azure-functions/functions-create-function-linux-custom-image?tabs=in-process%2Cbash%2Cazure-cli&pivots=programming-language-other#create-and-configure-a-function-app-on-azure-with-the-image). A [Managed Identity](https://docs.microsoft.com/en-us/azure/app-service/overview-managed-identity) is required to be configured to ensure the container can login to the [Azure CLI](https://docs.microsoft.com/en-us/cli/azure/authenticate-azure-cli#sign-in-with-a-managed-identity).
 
 ```bash
 # Azure CLI quickstart
