@@ -3,7 +3,7 @@ import json
 import os
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timedelta
 from string import Template
 from markdown import markdown
 from flatten_json import flatten
@@ -19,13 +19,20 @@ from fastapi import FastAPI, BackgroundTasks
 Workspace = namedtuple("Workspace", "subscription, customerId, resourceGroup, name")
 cache = Cache(maxsize=25600, ttl=300)
 
-datalake_blob_prefix = os.environ.get("DATALAKE_BLOB_PREFIX")
+try:
+    datalake_blob_prefix = os.environ["DATALAKE_BLOB_PREFIX"]  # e.g. "https://{datalake_account}.blob.core.windows.net/{datalake_container}"
+    datalake_subscription = os.environ["DATALAKE_SUBSCRIPTION"]
+    datalake_account, datalake_container = datalake_blob_prefix.split("/")[2:]
+    datalake_account = datalake_account.split(".")[0]
+except:
+    raise Exception("Please set DATALAKE_BLOB_PREFIX and DATALAKE_SUBSCRIPTION env vars")
+
 email_footer = os.environ.get("FOOTER_HTML", "Set FOOTER_HTML env var to configure this...")
-os.environ["AZURE_STORAGE_AUTH_MODE"] = "login"
 
 app = FastAPI()
 api = FastAPI(title="SIEM Query Utils")
 app.mount("/api/v1", api)
+
 
 @cache.memoize(ttl=60)
 def azcli(cmd: list):
@@ -40,11 +47,32 @@ def azcli(cmd: list):
     return json.loads(result)
 
 
+@cache.memoize(ttl=60 * 60 * 24)  # cache sas tokens 1 day
+def generatesas(account=datalake_account, container=datalake_container, subscription=datalake_subscription, permissions="racwdlt", expiry_days=3):
+    expiry = str(datetime.today().date() + timedelta(days=expiry_days))
+    return azcli(
+        [
+            "storage",
+            "container",
+            "generate-sas",
+            "--account-name",
+            account,
+            "-n",
+            container,
+            "--subscription",
+            subscription,
+            "--permissions",
+            permissions,
+            "--expiry",
+            expiry,
+        ]
+    )
+
+
 if os.environ.get("IDENTITY_HEADER"):
     # Use managed service identity to login
     try:
         azcli(["login", "--identity"])
-        run(["azcopy", "login", "--identity"])
     except Exception as e:
         # bail as we aren't able to login
         print(e)
@@ -112,7 +140,7 @@ def simple_query(query: str, name: str, timespan: str = "P7D"):
 
 def upload_results(results, blobdest, filenamekeys):
     "Uploads a list of json results as individual files split by timegenerated to a blob destination"
-    account, dest = sanitize_filepath(blobdest).split("/", 1)
+    blobdest = sanitize_filepath(blobdest)
     with tempfile.TemporaryDirectory() as tmpdir:
         dirnames = set()
         for result in results:
@@ -128,11 +156,12 @@ def upload_results(results, blobdest, filenamekeys):
                 f"{tmpdir}/{dirname}/{filename}",
                 (modifiedtime.timestamp(), modifiedtime.timestamp()),
             )
+        sas = generatesas()
         cmd = [
             "azcopy",
             "cp",
             tmpdir,
-            f"https://{account}.blob.core.windows.net/{dest}",
+            f"{datalake_blob_prefix}/{blobdest}?{sas}",
             "--put-md5",
             "--overwrite=ifSourceNewer",
             "--recursive=true",
@@ -174,11 +203,12 @@ def global_stats(
     results = analytics_query([ws.customerId for ws in list_workspaces()], query, timespan)
     if blobdest != "":
         blobdest = blobdest.format(querydate=datetime.now().date().isoformat())
-        account, dest = sanitize_filepath(blobdest).split("/", 1)
+        blobdest = sanitize_filepath(blobdest)
         with tempfile.NamedTemporaryFile(mode="w") as uploadjson:
             json.dump(results, uploadjson, sort_keys=True, indent=2)
             uploadjson.flush()
-            cmd = ["azcopy", "cp", uploadjson.name, f"https://{account}.blob.core.windows.net/{dest}", "--put-md5", "--overwrite=true"]
+            sas = generatesas()
+            cmd = ["azcopy", "cp", uploadjson.name, f"{datalake_blob_prefix}/{blobdest}?{sas}", "--put-md5", "--overwrite=true"]
             print(cmd)
             run(cmd)
     if count:
@@ -191,10 +221,9 @@ email_template = Template(open("templates/email-template.html").read())
 
 
 def get_datalake_file(path: str):
-    if not datalake_blob_prefix:
-        raise Exception("Please set DATALAKE_BLOB_PREFIX env var")
     path = sanitize_filepath(path)
-    url = f"{datalake_blob_prefix}/{path}"
+    sas = generatesas()
+    url = f"{datalake_blob_prefix}/{path}?{sas}"
     cmd = ["az", "storage", "blob", "download", "--blob-url", url, "-f", "/dev/stdout", "--max-connections", "1", "--no-progress", "-o", "none"]
     result = check_output(cmd)
     return json.loads(result)

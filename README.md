@@ -9,18 +9,27 @@ The [container image](https://github.com/wagov/siem-query-utils/pkgs/container/s
 
 ```bash
 # Azure CLI quickstart
-az functionapp create --name <APP_NAME> --storage-account <STORAGE_NAME> --resource-group AzureFunctionsContainers-rg --plan myPremiumPlan --deployment-container-image-name ghcr.io/wagov/siem-query-utils:v1.1
+az functionapp create --name <APP_NAME> --storage-account <STORAGE_NAME> --resource-group AzureFunctionsContainers-rg --plan myPremiumPlan --deployment-container-image-name ghcr.io/wagov/siem-query-utils:v1.1.1
+# Login to portal and configure DATALAKE_ env vars (these are needed for container to start)
 ```
 
 ## Development
 For local development and interactive debugging run as follows (will automatically reload on code changes from current folder):
 ```bash
-docker run -it -v $(pwd):/app -p 8000:8000 ghcr.io/wagov/siem-query-utils bash
-# inside docker container (TENANT_ID is optional, but useful if e.g. one tenant has specific auth constraints).
+docker run -it -v $(pwd):/app -e DATALAKE_SUBSCRIPTION="{subscription}" -e DATALAKE_BLOB_PREFIX="https://{account}.blob.core.windows.net/{container}" -p 8000:8000 ghcr.io/wagov/siem-query-utils bash
+# inside docker container (--tenant is optional, but useful if e.g. one tenant has specific auth constraints).
 az login --tenant $TENANT_ID
 # follow auth prompts
 ./main.py debug
 ```
-After running the above you can open http://localhost:8000/docs in your browser to get to the swagger debug ui which lets you test all the endpoints.
+After running the above you can open http://localhost:8000/api/v1/docs in your browser to get to the swagger debug ui which lets you test all the endpoints.
 
-You can also build and test the container locally using `docker build -t <localname>; docker run -it -v $(pwd):/app -p 8000:8000 <localname> /home/site/wwwroot/startup.sh`
+You can also build and test the container locally using 
+
+```bash
+docker build -t queryutils .; docker run -it -e DATALAKE_SUBSCRIPTION="{subscription}" -e DATALAKE_BLOB_PREFIX="https://{account}.blob.core.windows.net/{container}" -p 8000:8000 queryutils bash
+# inside docker container (--tenant is optional, but useful if e.g. one tenant has specific auth constraints).
+az login --tenant $TENANT_ID
+# follow auth prompts
+./startup.sh
+`````
