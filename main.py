@@ -88,7 +88,10 @@ def generatesas(account=datalake_account, container=datalake_container, subscrip
 def login(refresh: bool = False):
     if os.environ.get("IDENTITY_HEADER"):
         if refresh:
-            check_output(["az", "logout", "--only-show-errors", "-o", "json"])
+            try:
+                check_output(["az", "logout", "--only-show-errors", "-o", "json"])
+            except Exception as e:
+                pass
         # Use managed service identity to login
         try:
             check_output(["az", "login", "--identity", "--only-show-errors", "-o", "json"])
@@ -212,7 +215,7 @@ def global_query(
     """
     Query all workspaces with SecurityIncident tables using kusto.
     If blobdest is provided as a path the first 2 segments are assumed to be the location to save results to <account>/<container>/.../<filename>
-    If loganalyticsdest is provided it defines a custom log table to upload results to using the LA_CUSTOMERID and LA_CUSTOMERKEY env vars
+    If loganalyticsdest is provided it defines a custom log table to upload results to using the LA_CUSTOMERID and LA_SHAREDKEY env vars
     Results are saved as individual .json files, and overwritten if they already exist.
     Filenamekeys are a comma separated list of keys to build filename from
     """
