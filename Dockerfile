@@ -8,9 +8,9 @@ ENV AzureWebJobsScriptRoot=/home/site/wwwroot \
 WORKDIR /home/site/wwwroot
 
 COPY requirements.txt requirements.txt
-RUN pip install -r requirements.txt && \
-    az extension add -n log-analytics -y && \
-    az extension add -n resource-graph -y
+RUN pip install -r requirements.txt
+RUN az extension add -n log-analytics -y
+RUN az extension add -n resource-graph -y
 RUN curl -L https://aka.ms/downloadazcopy-v10-linux -o /tmp/azcopy.tar.gz && \
     cd /tmp && tar xf azcopy.tar.gz --strip 1 && rm azcopy.tar.gz && mv -v azcopy /usr/local/bin/azcopy
 
