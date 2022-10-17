@@ -1,2 +1,24 @@
 [tool.black]
 line-length = 160
+[tool.poetry]
+name = "siem-query-utils"
+version = "1.2.1"
+description = ""
+authors = ["Adon Metcalfe <adonm@fastmail.fm>"]
+readme = "README.md"
+packages = []
+
+[tool.poetry.dependencies]
+python = "^3.10"
+azure-cli = "^2.41.0"
+fastapi = {extras = ["all"], version = "^0.85.1"}
+fire = "^0.4.0"
+cacheout = "^0.14.1"
+markdown = "^3.4.1"
+flatten-json = "^0.1.13"
+pathvalidate = "^2.5.2"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

@@ -6,6 +6,7 @@ import hmac
 import base64
 import requests
 import hashlib
+import uvicorn
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from string import Template
@@ -483,15 +484,11 @@ def upload_loganalytics(rows: list, log_type: str):
     else:
         print("Response code: {}".format(response.status_code))
 
-
-def debug_server():
-    "Run a debug server on port 8000 that doesn't need auth"
-    import uvicorn
-
-    azcli(["extension", "add", "-n", "log-analytics", "-y"])
-    azcli(["extension", "add", "-n", "resource-graph", "-y"])
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, log_level="debug", reload=True)
-
+def serve():
+    host, port = "0.0.0.0", 8000
+    uvicorn.run(
+        app, port=port, host=host, log_level=os.environ.get("LOG_LEVEL", "info")
+    )
 
 if __name__ == "__main__":
     Fire(
@@ -500,6 +497,6 @@ if __name__ == "__main__":
             "simpleQuery": simple_query,
             "globalQuery": global_query,
             "globalStats": global_stats,
-            "debug": debug_server,
+            "serve": serve
         }
     )
