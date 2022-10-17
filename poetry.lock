@@ -2408,7 +2408,7 @@ python-versions = ">=3.4"
 [metadata]
 lock-version = "1.1"
 python-versions = "^3.10"
-content-hash = "e6e920bb76f6c73ae5f3f6307bf71e1daa0d2247c440fcf3ae011db8cb319d4d"
+content-hash = "c0470fb9f605fdc04ba81ce65a310bd98f9adf950842ef3983518eeba3f818bb"
 
 [metadata.files]
 adal = [

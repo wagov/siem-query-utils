@@ -6,7 +6,7 @@ version = "1.2.1"
 description = ""
 authors = ["Adon Metcalfe <adonm@fastmail.fm>"]
 readme = "README.md"
-packages = []
+packages = [{include = "siem_query_utils"}]
 
 [tool.poetry.dependencies]
 python = "^3.10"
@@ -17,7 +17,10 @@ cacheout = "^0.14.1"
 markdown = "^3.4.1"
 flatten-json = "^0.1.13"
 pathvalidate = "^2.5.2"
+python-dotenv = "^0.21.0"
 
+[tool.poetry.scripts]
+siem_query_utils = "siem_query_utils:cli"
 
 [build-system]
 requires = ["poetry-core"]
