@@ -4,6 +4,7 @@ import json
 import logging
 from string import Template
 from subprocess import check_output
+from api import azcli
 
 import httpx, os
 
@@ -52,30 +53,15 @@ If you are not redirected automatically, follow the <a href='$url'>link</a>
 @app.get("/", response_class=HTMLResponse)
 async def boot(request: Request):
     if not request.session.get("key") or not _session(request).get("main_path"):
-        if os.environ.get("IDENTITY_HEADER"):
-            try:
-                check_output(["az", "login", "--identity", "--allow-no-subscriptions"])
-            except Exception as e:
-                pass
         try:
             secret = os.environ["KEYVAULT_SESSION_SECRET"]
-            secret = check_output(
-                [
-                    "az",
-                    "keyvault",
-                    "secret",
-                    "show",
-                    "--id",
-                    secret,
-                    "--only-show-errors",
-                    "-o",
-                    "json",
-                ]
-            )
         except Exception as e:
             logging.warning(e)
             raise HTTPException(403)
-        secret = json.loads(secret)["value"]
+        secret = azcli(["keyvault", "secret", "show", "--id", secret, "--only-show-errors", "-o", "json"])
+        if "error" in secret:
+            raise HTTPException(403)
+        secret = secret["value"]
         await session_config(request, session_base64=secret)
     url = request.scope["root_path"] + _session(request)["main_path"]
     return HTMLResponse(redirect.substitute(url=url))
@@ -92,9 +78,7 @@ sample_session = {
 
 
 @app.post("/session_config")
-async def session_config(
-    request: Request, session: dict = sample_session, session_base64: str = ""
-):
+async def session_config(request: Request, session: dict = sample_session, session_base64: str = ""):
     """
     If sent session as a json object, save that as the session
     If sent session_base64, decode and return as a json object and the base64 string for easy editing
@@ -156,9 +140,7 @@ async def upstream(request: Request, prefix: str, path: str):
     for header in filtered:
         if header in headers:
             headers.pop(header)
-    rp_req = client.build_request(
-        request.method, url, headers=headers, content=await request.body()
-    )
+    rp_req = client.build_request(request.method, url, headers=headers, content=await request.body())
     try:
         rp_resp = await client.send(rp_req, stream=True)
     except Exception as e:

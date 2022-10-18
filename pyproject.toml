@@ -23,6 +23,9 @@ httpx = "^0.23.0"
 [tool.poetry.scripts]
 siem_query_utils = "siem_query_utils:cli"
 
+[tool.poetry.group.dev.dependencies]
+black = {version = "^22.10.0", allow-prereleases = true}
+
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
