@@ -1,0 +1,7 @@
+DATALAKE_SUBSCRIPTION={}
+DATALAKE_BLOB_PREFIX=https://{}.blob.core.windows.net/{}
+LA_CUSTOMERID={}
+LA_SHAREDKEY={}
+KQL_BASEURL=https://{}
+TENANT_ID={}
+KEYVAULT_SESSION_SECRET=https://{}.vault.azure.net/secrets/{}

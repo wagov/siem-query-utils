@@ -10,18 +10,11 @@ import httpx, httpx_cache, os
 from secrets import token_urlsafe
 from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.responses import Response, RedirectResponse
-from fastapi.middleware.gzip import GZipMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
 
 app = FastAPI()
-app.add_middleware(
-    SessionMiddleware,
-    secret_key=token_urlsafe(),
-    session_cookie="fastapi_jupyterlite",
-    same_site="strict",
-)
-app.add_middleware(GZipMiddleware)
+app.add_middleware(SessionMiddleware, secret_key=token_urlsafe(), session_cookie="fastapi_jupyterlite", same_site="strict")
 
 sessions = {}  # global cache of sessions and async clients
 
@@ -78,8 +71,13 @@ def session_config(request: Request, session: dict = sample_session, session_bas
     session_str = json.dumps(session, sort_keys=True).encode("utf8")
     key, b64 = hashlib.sha256(session_str).hexdigest(), base64.b64encode(session_str)
     posted_session = {"session": session, "base64": b64, "key": key}
+    apis = {}
+    for key, data in session.items():
+        if key.startswith("proxy_"):
+            apis[key.replace("proxy_", "", 1)] = data["base_url"]
     if key not in sessions:  # keep existing session if config the same
         sessions[key] = posted_session
+        sessions["apis"] = apis
     request.session["key"] = key  # save ref to session in users cookie
     return posted_session
 
@@ -93,29 +91,12 @@ async def proxy_config(request: Request, proxy: str, config: dict):
 
 
 @app.get("/apis")
-async def apis(request: Request):
+async def apis(request: Request) -> dict:
     session = _session(request)
-    apis = {}
-    for key, data in session.items():
-        if key.startswith("proxy_"):
-            apis[key.replace("proxy_", "", 1)] = data["base_url"]
-    return apis
+    return session["apis"]
 
 
-def filter_headers(
-    headers: dict,
-    filtered_prefixes=[
-        "cookie",
-        "set-cookie",
-        "x-ms-",
-        "x-arr-",
-        "disguised-host",
-        "referer",
-        "content-length",
-        "content-encoding",
-        "accept-encoding",
-    ],
-):
+def filter_headers(headers: dict, filtered_prefixes=["cookie", "set-cookie", "x-ms-", "x-arr-", "disguised-host", "referer"]):
     clean_headers = {}
     for key, value in headers.items():
         for prefix in filtered_prefixes:
@@ -126,16 +107,8 @@ def filter_headers(
     return clean_headers
 
 
-def upstream_request(proxy: dict, method: str, url: str, headers: dict, content: bytes) -> httpx.Response:
-    client = httpx_client(proxy)
-    headers = filter_headers(headers)
-    headers["host"] = client.base_url.host
-    response = client.request(method, url, content=content, headers=headers)
-    response.headers = filter_headers(response.headers)
-    return response
-
-
 async def get_body(request: Request):
+    # wrapper to allow sync access of body
     return await request.body()
 
 
@@ -143,12 +116,9 @@ async def get_body(request: Request):
 def upstream(request: Request, prefix: str, path: str, body=Depends(get_body)):
     session = _session(request)
     proxy_key = f"proxy_{prefix}"
-    upstream_response = upstream_request(
-        proxy=session.get(proxy_key, {"base_url": f"https://{prefix}"}),
-        method=request.method,
-        url=httpx.URL(path=path, query=request.url.query.encode("utf-8")),
-        headers=request.headers,
-        content=body,
-    )
-    response = Response(content=upstream_response.content, status_code=upstream_response.status_code, headers=upstream_response.headers)
-    return response
+    client = httpx_client(session.get(proxy_key, {"base_url": f"https://{prefix}"}))
+    headers = filter_headers(request.headers)
+    headers["host"] = client.base_url.host
+    url = httpx.URL(path=path, query=request.url.query.encode("utf-8"))
+    with client.stream(request.method, url, content=body, headers=headers) as origin:
+        return Response(content=b"".join(origin.iter_raw()), status_code=origin.status_code, headers=filter_headers(origin.headers))
