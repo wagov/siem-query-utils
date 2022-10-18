@@ -130,7 +130,6 @@ def upstream_request(proxy: dict, method: str, url: str, headers: dict, content:
     client = httpx_client(proxy)
     headers = filter_headers(headers)
     headers["host"] = client.base_url.host
-    headers["accept-encoding"] = "gzip"
     response = client.request(method, url, content=content, headers=headers)
     response.headers = filter_headers(response.headers)
     return response
