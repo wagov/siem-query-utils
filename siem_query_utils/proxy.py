@@ -75,9 +75,9 @@ def session_config(request: Request, session: dict = sample_session, session_bas
     for key, data in session.items():
         if key.startswith("proxy_"):
             apis[key.replace("proxy_", "", 1)] = data["base_url"]
+    posted_session["session"].update({"apis": apis})
     if key not in sessions:  # keep existing session if config the same
         sessions[key] = posted_session
-        sessions["apis"] = apis
     request.session["key"] = key  # save ref to session in users cookie
     return posted_session
 
@@ -92,8 +92,7 @@ async def proxy_config(request: Request, proxy: str, config: dict):
 
 @app.get("/apis")
 async def apis(request: Request) -> dict:
-    session = _session(request)
-    return session["apis"]
+    return _session(request)["apis"]
 
 
 def filter_headers(headers: dict, filtered_prefixes=["cookie", "set-cookie", "x-ms-", "x-arr-", "disguised-host", "referer"]):
