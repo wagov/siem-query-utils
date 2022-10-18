@@ -4,7 +4,7 @@ import json
 import logging
 from string import Template
 from subprocess import check_output
-from api import azcli
+from .api import azcli
 
 import httpx, os
 
