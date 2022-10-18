@@ -18,6 +18,7 @@ markdown = "^3.4.1"
 flatten-json = "^0.1.13"
 pathvalidate = "^2.5.2"
 python-dotenv = "^0.21.0"
+httpx = "^0.23.0"
 
 [tool.poetry.scripts]
 siem_query_utils = "siem_query_utils:cli"

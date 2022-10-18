@@ -6,9 +6,11 @@ load_dotenv()
 from fastapi import FastAPI
 from .api import list_workspaces, simple_query, global_query, global_stats
 from .api import app as api
+from .proxy import app as proxy
 
 app = FastAPI()
 app.mount("/api/v1", api)
+app.mount("/proxy", proxy)
 
 
 def serve():
