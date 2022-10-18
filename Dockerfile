@@ -1,17 +1,17 @@
-FROM mcr.microsoft.com/azure-functions/python:4-python3.10
+FROM python:3
 LABEL org.opencontainers.image.authors="cybersecurity@dpc.wa.gov.au"
 LABEL org.opencontainers.image.source="https://github.com/wagov/siem-query-utils"
 
-ENV AzureWebJobsScriptRoot=/home/site/wwwroot \
-    AzureFunctionsJobHost__Logging__Console__IsEnabled=true
+EXPOSE 8000
 
-WORKDIR /home/site/wwwroot
 
-COPY requirements.txt requirements.txt
-RUN pip install -r requirements.txt
-RUN az extension add -n log-analytics -y
-RUN az extension add -n resource-graph -y
+RUN pip install poetry
 RUN curl -L https://aka.ms/downloadazcopy-v10-linux -o /tmp/azcopy.tar.gz && \
     cd /tmp && tar xf azcopy.tar.gz --strip 1 && rm azcopy.tar.gz && mv -v azcopy /usr/local/bin/azcopy
-
 COPY . ./
+RUN poetry install
+RUN poetry run az extension add -n log-analytics -y
+RUN poetry run az extension add -n resource-graph -y
+
+
+ENTRYPOINT [ "poetry", "run", "siem_query_utils", "serve" ]

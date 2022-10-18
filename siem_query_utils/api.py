@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 import json
 import os
 import tempfile
@@ -7,12 +6,12 @@ import base64
 import requests
 import hashlib
 from concurrent.futures import ThreadPoolExecutor
+from importlib.resources import files
 from datetime import datetime, timedelta
 from string import Template
 from markdown import markdown
 from flatten_json import flatten
 from collections import namedtuple
-from fire import Fire
 from subprocess import check_output, run
 from dateutil.parser import isoparse
 from cacheout import Cache
@@ -23,6 +22,7 @@ from fastapi import FastAPI, BackgroundTasks
 
 Workspace = namedtuple("Workspace", "subscription, customerId, resourceGroup, name")
 cache = Cache(maxsize=25600, ttl=300)
+pkgfiles = files(__package__)
 
 try:
     datalake_blob_prefix = os.environ["DATALAKE_BLOB_PREFIX"]  # e.g. "https://{datalake_account}.blob.core.windows.net/{datalake_container}"
@@ -41,10 +41,7 @@ app_state = {
     "login_time": datetime.utcnow() - timedelta(days=1) # last login 1 day ago to force relogin
 }
 
-app = FastAPI()
-api = FastAPI(title="SIEM Query Utils")
-app.mount("/api/v1", api)
-
+app = FastAPI(title="SIEM Query Utils")
 
 @cache.memoize(ttl=60)
 def azcli(cmd: list):
@@ -114,7 +111,7 @@ def login(refresh: bool = False):
 def loadkql(query):
     "If query starts with kql/ then load it from a local file and return text"
     if query.startswith("kql/"):
-        query = open(sanitize_filepath(query)).read().strip()
+        query = (pkgfiles / sanitize_filepath(query)).read_text().strip()
     elif query.startswith("kql://"):
         base_url = os.environ["KQL_BASEURL"]
         path = sanitize_filepath(query.replace("kql://", ""))
@@ -147,7 +144,7 @@ def analytics_query(workspaces: list, query: str, timespan: str = "P7D", outputf
     return results
 
 
-@api.get("/listWorkspaces")
+@app.get("/listWorkspaces")
 @cache.memoize(ttl=60 * 60 * 3)  # 3 hr cache
 def list_workspaces():
     "Get sentinel workspaces as a list of named tuples"
@@ -167,7 +164,7 @@ def list_workspaces():
     return sorted(list(sentinelworkspaces))
 
 
-@api.get("/simpleQuery")
+@app.get("/simpleQuery")
 def simple_query(query: str, name: str, timespan: str = "P7D"):
     "Find first workspace matching name, then run a kusto query against it"
     for workspace in list_workspaces():
@@ -208,7 +205,7 @@ def upload_results(results, blobdest, filenamekeys):
         run(cmd)
 
 
-@api.get("/globalQuery")
+@app.get("/globalQuery")
 def global_query(
     query: str, tasks: BackgroundTasks, timespan: str = "P7D", count: bool = False, blobdest: str = "", loganalyticsdest: str = "", filenamekeys: str = ""
 ):
@@ -232,7 +229,7 @@ def global_query(
         return results
 
 
-@api.get("/globalStats")
+@app.get("/globalStats")
 def global_stats(
     query: str,
     timespan: str = "P7D",
@@ -261,7 +258,7 @@ def global_stats(
         return results
 
 
-email_template = Template(open("templates/email-template.html").read())
+email_template = Template((pkgfiles / "templates/email-template.html").read_text())
 
 
 def get_datalake_file(path: str):
@@ -273,7 +270,7 @@ def get_datalake_file(path: str):
     return json.loads(result)
 
 
-@api.get("/sentinelBeautify")
+@app.get("/sentinelBeautify")
 def sentinel_beautify(blob_path: str):
     """
     Takes a SecurityIncident from sentinel, and retreives related alerts and returns markdown, html and detailed json representation.
@@ -484,22 +481,5 @@ def upload_loganalytics(rows: list, log_type: str):
         print("Response code: {}".format(response.status_code))
 
 
-def debug_server():
-    "Run a debug server on port 8000 that doesn't need auth"
-    import uvicorn
-
-    azcli(["extension", "add", "-n", "log-analytics", "-y"])
-    azcli(["extension", "add", "-n", "resource-graph", "-y"])
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, log_level="debug", reload=True)
 
 
-if __name__ == "__main__":
-    Fire(
-        {
-            "listWorkspaces": list_workspaces,
-            "simpleQuery": simple_query,
-            "globalQuery": global_query,
-            "globalStats": global_stats,
-            "debug": debug_server,
-        }
-    )
