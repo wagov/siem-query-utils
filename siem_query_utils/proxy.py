@@ -60,6 +60,7 @@ async def boot(request: Request):
             raise HTTPException(403)
         secret = azcli(["keyvault", "secret", "show", "--id", secret, "--only-show-errors", "-o", "json"])
         if "error" in secret:
+            logging.warning(secret["error"])
             raise HTTPException(403)
         secret = secret["value"]
         await session_config(request, session_base64=secret)
