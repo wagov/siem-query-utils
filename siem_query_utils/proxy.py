@@ -58,7 +58,7 @@ async def boot(request: Request):
         except Exception as e:
             logging.warning(e)
             raise HTTPException(403)
-        secret = azcli(["keyvault", "secret", "show", "--id", secret, "--only-show-errors", "-o", "json"])
+        secret = azcli(["keyvault", "secret", "show", "--id", secret])
         if "error" in secret:
             logging.warning(secret["error"])
             raise HTTPException(403)
