@@ -2,7 +2,7 @@
 line-length = 160
 [tool.poetry]
 name = "siem-query-utils"
-version = "1.2.1"
+version = "1.3.3"
 description = ""
 authors = ["Adon Metcalfe <adonm@fastmail.fm>"]
 readme = "README.md"
@@ -18,7 +18,7 @@ markdown = "^3.4.1"
 flatten-json = "^0.1.13"
 pathvalidate = "^2.5.2"
 python-dotenv = "^0.21.0"
-httpx = "^0.23.0"
+httpx-cache = "^0.6.1"
 
 [tool.poetry.scripts]
 siem_query_utils = "siem_query_utils:cli"

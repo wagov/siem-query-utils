@@ -3,7 +3,8 @@ from fire import Fire
 from dotenv import load_dotenv
 load_dotenv()
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import RedirectResponse
 from .api import list_workspaces, simple_query, global_query, global_stats
 from .api import app as api
 from .proxy import app as proxy
@@ -12,11 +13,14 @@ app = FastAPI()
 app.mount("/api/v1", api)
 app.mount("/proxy", proxy)
 
+@app.get("/")
+def index():
+    return RedirectResponse("/proxy/main_path")
 
 def serve():
     host, port = "0.0.0.0", 8000
     uvicorn.run(
-        app, port=port, host=host, log_level=os.environ.get("LOG_LEVEL", "info")
+        app, port=port, host=host, log_level=os.environ.get("LOG_LEVEL", "warning")
     )
 
 def cli():
