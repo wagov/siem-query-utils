@@ -102,10 +102,23 @@ async def apis(request: Request):
     return apis
 
 
-def filter_headers(headers: dict, filtered=["cookie", "set-cookie", "x-ms-", "x-arr-", "disguised-host", "referer", "content-length", "content-encoding"]):
+def filter_headers(
+    headers: dict,
+    filtered_prefixes=[
+        "cookie",
+        "set-cookie",
+        "x-ms-",
+        "x-arr-",
+        "disguised-host",
+        "referer",
+        "content-length",
+        "content-encoding",
+        "accept-encoding",
+    ],
+):
     clean_headers = {}
     for key, value in headers.items():
-        for prefix in filtered:
+        for prefix in filtered_prefixes:
             if key.lower().startswith(prefix):
                 break
         else:
@@ -117,6 +130,7 @@ def upstream_request(proxy: dict, method: str, url: str, headers: dict, content:
     client = httpx_client(proxy)
     headers = filter_headers(headers)
     headers["host"] = client.base_url.host
+    headers["accept-encoding"] = "gzip"
     response = client.request(method, url, content=content, headers=headers)
     response.headers = filter_headers(response.headers)
     return response
