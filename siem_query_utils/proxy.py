@@ -1,7 +1,7 @@
 import base64
 from distutils.command.clean import clean
 import hashlib
-import json
+import json, typing
 import logging
 from .api import azcli, cache
 
@@ -22,7 +22,10 @@ sessions = {}  # global cache of sessions and async clients
 @cache.memoize(ttl=60 * 60)
 def httpx_client(proxy):
     # cache client objects for an hour
-    return httpx_cache.Client(**proxy, timeout=None)
+    client = httpx_cache.Client(**proxy, timeout=None)
+    client.headers["host"] = client.base_url.host
+    client.headers["accept-encoding"] = "gzip"
+    return client
 
 
 @cache.memoize(ttl=60 * 60)
@@ -40,17 +43,21 @@ def _session(request: Request) -> dict:
     if not request.session.get("key") or "main_path" not in sessions.get(request.session["key"], {}):
         if "KEYVAULT_SESSION_SECRET" not in os.environ:
             raise HTTPException(403, "KEYVAULT_SESSION_SECRET not available")
-        session_config(request, session_base64=boot(os.environ["KEYVAULT_SESSION_SECRET"]))
+        session_data = load_session(request, session_base64=boot(os.environ["KEYVAULT_SESSION_SECRET"]))
+        if session_data["key"] not in sessions:  # keep existing session if config the same
+            sessions[session_data["key"]] = session_data["session"]
+        request.session["key"] = session_data["key"]  # save ref to session in users cookie
     return sessions[request.session["key"]]["session"]
 
 
-sample_session = {
+default_session = {
     "proxy_httpbin": {
         "base_url": "https://httpbin.org",
-        "params": {"get": "params"},
-        "headers": {"http": "headers"},
-        "cookies": {"cookie": "jar"},
-    }
+        # "params": {"get": "params"},
+        # "headers": {"http": "headers"},
+        # "cookies": {"cookie": "jar"},
+    },
+    "proxy_jupyter": {"base_url": "https://wagov.github.io/wasoc-jupyterlite"},
 }
 
 
@@ -59,43 +66,37 @@ def main_path(request: Request):
     return RedirectResponse(request.scope.get("root_path") + _session(request)["main_path"])
 
 
-@app.post("/session_config")
-def session_config(request: Request, session: dict = sample_session, session_base64: str = ""):
+@app.post("/config")
+def config(session: dict = default_session):
     """
-    If sent session as a json object, save that as the session
-    If sent session_base64, decode and return as a json object and the base64 string for easy editing
-    Doesn't modify an existing session if keys are the same (to preserve asyncclient cache)
+    Basic validation for session config, to save place the
+    `base64` string into the keyvault secret defined with `KEYVAULT_SESSION_SECRET`
     """
-    if session_base64:
-        session = json.loads(base64.b64decode(session_base64))
+    return load_session(base64.b64encode(json.dumps(session, sort_keys=True).encode("utf8")))
+
+
+def load_session(data: str, session: dict = default_session):
+    """
+    Decode and return a session as a json object and the base64 string for easy editing
+    """
+    session.update(json.loads(base64.b64decode(data)))
     session_str = json.dumps(session, sort_keys=True).encode("utf8")
     key, b64 = hashlib.sha256(session_str).hexdigest(), base64.b64encode(session_str)
-    posted_session = {"session": session, "base64": b64, "key": key}
-    apis = {}
+    session["apis"] = {}
     for key, data in session.items():
         if key.startswith("proxy_"):
-            apis[key.replace("proxy_", "", 1)] = data["base_url"]
-    posted_session["session"].update({"apis": apis})
-    if key not in sessions:  # keep existing session if config the same
-        sessions[key] = posted_session
-    request.session["key"] = key  # save ref to session in users cookie
-    return posted_session
-
-
-@app.post("/proxy_config/{proxy}")
-async def proxy_config(request: Request, proxy: str, config: dict):
-    session = _session(request)
-    session[f"proxy_{proxy}"] = config
-    await session_config(request, session)
-    return await apis(request)
+            # Validate proxy parameters
+            assert httpx_client(data)
+            session["apis"][key.replace("proxy_", "", 1)] = data["base_url"]
+    return {"session": session, "base64": b64, "key": key}
 
 
 @app.get("/apis")
-async def apis(request: Request) -> dict:
+def apis(request: Request) -> dict:
     return _session(request)["apis"]
 
 
-def filter_headers(headers: dict, filtered_prefixes=["cookie", "x-ms-", "x-arr-", "disguised-host", "referer"]):
+def filter_headers(headers: dict, filtered_prefixes=["host", "accept-encoding", "cookie", "x-ms-", "x-arr-", "disguised-host", "referer"]):
     clean_headers = {}
     for key, value in headers.items():
         for prefix in filtered_prefixes:
@@ -115,14 +116,13 @@ async def get_body(request: Request):
 def upstream(request: Request, prefix: str, path: str, body=Depends(get_body)):
     session = _session(request)
     proxy_key = f"proxy_{prefix}"
-    client = httpx_client(session.get(proxy_key, {"base_url": f"https://{prefix}"}))
+    if proxy_key not in session:
+        raise HTTPException(404, f"{prefix} does not have a valid configuration, see /proxy/apis for valid prefixes.")
+    client = httpx_client(session[proxy_key])
     headers = filter_headers(request.headers)
-    headers["host"] = client.base_url.host
     url = httpx.URL(path=path, query=request.url.query.encode("utf-8"))
-    outbound_filtered_prefixes = ["set-cookie"]
     with client.stream(request.method, url, content=body, headers=headers) as origin:
-        return Response(
-            content=b"".join(origin.iter_raw()),
-            status_code=origin.status_code,
-            headers=filter_headers(origin.headers, filtered_prefixes=outbound_filtered_prefixes),
-        )
+        outbound_filtered_prefixes = ["set-cookie"]
+        headers = filter_headers(origin.headers, filtered_prefixes=outbound_filtered_prefixes)
+        response = Response(content=b"".join(origin.iter_raw()), status_code=origin.status_code, headers=headers)
+        return response
