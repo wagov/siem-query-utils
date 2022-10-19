@@ -10,7 +10,7 @@ The [container image](https://github.com/wagov/siem-query-utils/pkgs/container/s
 
 ```bash
 # Azure CLI quickstart
-az webapp create --name <APP_NAME> --resource-group myRG --plan myPremiumPlan --deployment-container-image-name ghcr.io/wagov/siem-query-utils:v1.3.3
+az webapp create --name <APP_NAME> --resource-group myRG --plan myPremiumPlan --deployment-container-image-name ghcr.io/wagov/siem-query-utils:v1.3.4
 # Login to portal and configure env vars (these are needed for container to start)
 ```
 
