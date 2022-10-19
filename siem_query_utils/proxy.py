@@ -24,7 +24,6 @@ def httpx_client(proxy):
     # cache client objects for an hour
     client = httpx_cache.Client(**proxy, timeout=None)
     client.headers["host"] = client.base_url.host
-    client.headers["accept-encoding"] = "gzip"
     return client
 
 
@@ -38,7 +37,7 @@ def boot(secret):
     return secret["value"]
 
 
-def _session(request: Request) -> dict:
+def _session(request: Request, key="session") -> dict:
     # Create or retrieve a session
     if not request.session.get("key") or "main_path" not in sessions.get(request.session["key"], {}):
         if "KEYVAULT_SESSION_SECRET" not in os.environ:
@@ -47,7 +46,7 @@ def _session(request: Request) -> dict:
         if session_data["key"] not in sessions:  # keep existing session if config the same
             sessions[session_data["key"]] = session_data
         request.session["key"] = session_data["key"]  # save ref to session in users cookie
-    return sessions[request.session["key"]]["session"]
+    return sessions[request.session["key"]][key]
 
 
 default_session = {
@@ -66,37 +65,50 @@ def main_path(request: Request):
     return RedirectResponse(request.scope.get("root_path") + _session(request)["main_path"])
 
 
-@app.post("/config")
-def config(session: dict = default_session):
+def encode_session(session: dict):
+    return base64.b64encode(json.dumps(session, sort_keys=True).encode("utf8"))
+
+
+@app.post("/config_base64")
+def config_base64(session: str = encode_session(default_session)):
     """
-    Basic validation for session config, to save place the
+    Basic validation for session confi in base64 format, to save place the
     `base64` string into the keyvault secret defined with `KEYVAULT_SESSION_SECRET`
     """
-    return load_session(base64.b64encode(json.dumps(session, sort_keys=True).encode("utf8")))
+    return load_session(session)
 
 
-def load_session(data: str, session: dict = default_session):
+@app.post("/config")
+def config_dict(session: dict = default_session.copy()):
+    """
+    Basic validation for session config in json format, to save place the
+    `base64` string into the keyvault secret defined with `KEYVAULT_SESSION_SECRET`
+    """
+    return load_session(encode_session(session))
+
+
+def load_session(data: str, session: dict = default_session.copy()):
     """
     Decode and return a session as a json object and the base64 string for easy editing
     """
     session.update(json.loads(base64.b64decode(data)))
     session_str = json.dumps(session, sort_keys=True).encode("utf8")
     key, b64 = hashlib.sha256(session_str).hexdigest(), base64.b64encode(session_str)
-    session["apis"] = {}
-    for key, data in session.items():
-        if key.startswith("proxy_"):
+    apis = {}
+    for item, data in session.items():
+        if item.startswith("proxy_"):
             # Validate proxy parameters
             assert httpx_client(data)
-            session["apis"][key.replace("proxy_", "", 1)] = data["base_url"]
-    return {"session": session, "base64": b64, "key": key}
+            apis[item.replace("proxy_", "", 1)] = data["base_url"]
+    return {"session": session, "base64": b64, "key": key, "apis": apis}
 
 
 @app.get("/apis")
 def apis(request: Request) -> dict:
-    return _session(request)["apis"]
+    return _session(request, key="apis")
 
 
-def filter_headers(headers: dict, filtered_prefixes=["host", "accept-encoding", "cookie", "x-ms-", "x-arr-", "disguised-host", "referer"]):
+def filter_headers(headers: dict, filtered_prefixes=["host", "cookie", "x-ms-", "x-arr-", "disguised-host", "referer"]):
     clean_headers = {}
     for key, value in headers.items():
         for prefix in filtered_prefixes:
@@ -121,8 +133,8 @@ def upstream(request: Request, prefix: str, path: str, body=Depends(get_body)):
     client = httpx_client(session[proxy_key])
     headers = filter_headers(request.headers)
     url = httpx.URL(path=path, query=request.url.query.encode("utf-8"))
-    with client.stream(request.method, url, content=body, headers=headers) as origin:
-        outbound_filtered_prefixes = ["set-cookie"]
-        headers = filter_headers(origin.headers, filtered_prefixes=outbound_filtered_prefixes)
-        response = Response(content=b"".join(origin.iter_raw()), status_code=origin.status_code, headers=headers)
-        return response
+    origin = client.request(request.method, url, content=body, headers=headers)
+    outbound_filtered_prefixes = ["set-cookie"]
+    headers = filter_headers(origin.headers, filtered_prefixes=outbound_filtered_prefixes)
+    response = Response(content=origin.read(), status_code=origin.status_code, headers=headers)
+    return response
