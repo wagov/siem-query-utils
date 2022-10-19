@@ -56,6 +56,7 @@ default_session = {
         # "cookies": {"cookie": "jar"},
     },
     "proxy_jupyter": {"base_url": "https://wagov.github.io/wasoc-jupyterlite"},
+    "main_path": "/jupyter/lab/index.html" # this is redirected to when index is loaded
 }
 
 
