@@ -95,7 +95,7 @@ async def apis(request: Request) -> dict:
     return _session(request)["apis"]
 
 
-def filter_headers(headers: dict, filtered_prefixes=["cookie", "set-cookie", "x-ms-", "x-arr-", "disguised-host", "referer"]):
+def filter_headers(headers: dict, filtered_prefixes=["cookie", "x-ms-", "x-arr-", "disguised-host", "referer"]):
     clean_headers = {}
     for key, value in headers.items():
         for prefix in filtered_prefixes:
@@ -119,5 +119,10 @@ def upstream(request: Request, prefix: str, path: str, body=Depends(get_body)):
     headers = filter_headers(request.headers)
     headers["host"] = client.base_url.host
     url = httpx.URL(path=path, query=request.url.query.encode("utf-8"))
+    outbound_filtered_prefixes = ["set-cookie"]
     with client.stream(request.method, url, content=body, headers=headers) as origin:
-        return Response(content=b"".join(origin.iter_raw()), status_code=origin.status_code, headers=filter_headers(origin.headers))
+        return Response(
+            content=b"".join(origin.iter_raw()),
+            status_code=origin.status_code,
+            headers=filter_headers(origin.headers, filtered_prefixes=outbound_filtered_prefixes),
+        )
