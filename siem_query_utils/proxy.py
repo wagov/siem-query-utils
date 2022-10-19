@@ -133,8 +133,8 @@ def upstream(request: Request, prefix: str, path: str, body=Depends(get_body)):
     headers = filter_headers(request.headers)
     url = httpx.URL(path=path, query=request.url.query.encode("utf-8"))
     with client.stream(request.method, url, content=body, headers=headers) as origin:
-        response = Response(content=b"".join(origin.iter_raw()), status_code=origin.status_code)
-        for key, value in origin.headers.items():
-            if key.lower() not in ["set-cookie", "content-length"]:
-                response.headers[key] = value
+        response = Response(status_code=origin.status_code)
+        response.body = b"".join(origin.iter_raw())
+        strip_output_headers = ["set-cookie", "transfer-encoding", "content-length", "server", "date", "connection"]
+        response.init_headers(headers = filter_headers(origin.headers, filtered_prefixes=strip_output_headers))
         return response
