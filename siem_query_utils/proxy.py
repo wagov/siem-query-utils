@@ -86,25 +86,32 @@ def config_dict(session: dict = default_session.copy()):
     return load_session(encode_session(session))
 
 
-def load_session(data: str, session: dict = default_session.copy()):
+def load_session(data: str, config: dict = default_session.copy()):
     """
     Decode and return a session as a json object and the base64 string for easy editing
     """
-    session.update(json.loads(base64.b64decode(data)))
-    session_str = json.dumps(session, sort_keys=True).encode("utf8")
-    key, b64 = hashlib.sha256(session_str).hexdigest(), base64.b64encode(session_str)
-    apis = {}
-    for item, data in session.items():
+    config.update(json.loads(base64.b64decode(data)))
+    session = {"session": config, "base64": encode_session(config), "apis": {}}
+    session["key"] = hashlib.sha256(session["base64"]).hexdigest()
+    for item, data in config.items():
         if item.startswith("proxy_"):
             # Validate proxy parameters
             assert httpx_client(data)
-            apis[item.replace("proxy_", "", 1)] = data["base_url"]
-    return {"session": session, "base64": b64, "key": key, "apis": apis}
+            session["apis"][item.replace("proxy_", "", 1)] = data["base_url"]
+    return session
 
 
 @app.get("/apis")
 def apis(request: Request) -> dict:
+    # Returns configured origins
     return _session(request, key="apis")
+
+
+def client(request: Request, prefix: str):
+    # Returns a client cached up to an hour for sending requests to an origin
+    if prefix not in apis(request):
+        raise HTTPException(404, f"{prefix} does not have a valid configuration, see /proxy/apis for valid prefixes.")
+    return httpx_client(_session(request)[f"proxy_{prefix}"])
 
 
 def filter_headers(headers: dict, filtered_prefixes=["host", "cookie", "x-ms-", "x-arr-", "disguised-host", "referer"]):
@@ -125,16 +132,12 @@ async def get_body(request: Request):
 
 @app.get("/{prefix}/{path:path}", response_class=Response)
 def upstream(request: Request, prefix: str, path: str, body=Depends(get_body)):
-    session = _session(request)
-    proxy_key = f"proxy_{prefix}"
-    if proxy_key not in session:
-        raise HTTPException(404, f"{prefix} does not have a valid configuration, see /proxy/apis for valid prefixes.")
-    client = httpx_client(session[proxy_key])
+    # Proxies a request to a defined upstream as defined in session
     headers = filter_headers(request.headers)
     url = httpx.URL(path=path, query=request.url.query.encode("utf-8"))
-    with client.stream(request.method, url, content=body, headers=headers) as origin:
+    with client(request, prefix).stream(request.method, url, content=body, headers=headers) as origin:
         response = Response(status_code=origin.status_code)
         response.body = b"".join(origin.iter_raw())
         strip_output_headers = ["set-cookie", "transfer-encoding", "content-length", "server", "date", "connection"]
-        response.init_headers(headers = filter_headers(origin.headers, filtered_prefixes=strip_output_headers))
+        response.init_headers(headers=filter_headers(origin.headers, filtered_prefixes=strip_output_headers))
         return response
