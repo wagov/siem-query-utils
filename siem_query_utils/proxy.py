@@ -15,7 +15,6 @@ from starlette.middleware.sessions import SessionMiddleware
 
 app = FastAPI()
 app.add_middleware(SessionMiddleware, secret_key=token_urlsafe(), session_cookie="fastapi_jupyterlite", same_site="strict")
-
 sessions = {}  # global cache of sessions and async clients
 
 
@@ -133,8 +132,9 @@ def upstream(request: Request, prefix: str, path: str, body=Depends(get_body)):
     client = httpx_client(session[proxy_key])
     headers = filter_headers(request.headers)
     url = httpx.URL(path=path, query=request.url.query.encode("utf-8"))
-    origin = client.request(request.method, url, content=body, headers=headers)
-    outbound_filtered_prefixes = ["set-cookie"]
-    headers = filter_headers(origin.headers, filtered_prefixes=outbound_filtered_prefixes)
-    response = Response(content=origin.read(), status_code=origin.status_code, headers=headers)
-    return response
+    with client.stream(request.method, url, content=body, headers=headers) as origin:
+        response = Response(content=b"".join(origin.iter_raw()), status_code=origin.status_code)
+        for key, value in origin.headers.items():
+            if key.lower() not in ["set-cookie", "content-length"]:
+                response.headers[key] = value
+        return response
