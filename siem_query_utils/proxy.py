@@ -43,9 +43,9 @@ def _session(request: Request) -> dict:
     if not request.session.get("key") or "main_path" not in sessions.get(request.session["key"], {}):
         if "KEYVAULT_SESSION_SECRET" not in os.environ:
             raise HTTPException(403, "KEYVAULT_SESSION_SECRET not available")
-        session_data = load_session(request, session_base64=boot(os.environ["KEYVAULT_SESSION_SECRET"]))
+        session_data = load_session(boot(os.environ["KEYVAULT_SESSION_SECRET"]))
         if session_data["key"] not in sessions:  # keep existing session if config the same
-            sessions[session_data["key"]] = session_data["session"]
+            sessions[session_data["key"]] = session_data
         request.session["key"] = session_data["key"]  # save ref to session in users cookie
     return sessions[request.session["key"]]["session"]
 
