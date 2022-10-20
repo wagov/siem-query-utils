@@ -24,6 +24,10 @@ Workspace = namedtuple("Workspace", "subscription, customerId, resourceGroup, na
 cache = Cache(maxsize=25600, ttl=300)
 pkgfiles = files(__package__)
 
+def clean_path(path):
+    # remove any dir traversal and dangerous chars
+    return sanitize_filepath(path).replace("..", "")
+
 try:
     datalake_blob_prefix = os.environ["DATALAKE_BLOB_PREFIX"]  # e.g. "https://{datalake_account}.blob.core.windows.net/{datalake_container}"
     datalake_subscription = os.environ["DATALAKE_SUBSCRIPTION"]
@@ -111,10 +115,10 @@ def login(refresh: bool = False):
 def loadkql(query):
     "If query starts with kql/ then load it from a local file and return text"
     if query.startswith("kql/"):
-        query = (pkgfiles / sanitize_filepath(query)).read_text().strip()
+        query = (pkgfiles / clean_path(query)).read_text().strip()
     elif query.startswith("kql://"):
         base_url = os.environ["KQL_BASEURL"]
-        path = sanitize_filepath(query.replace("kql://", ""))
+        path = clean_path(query.replace("kql://", ""))
         url = f"{base_url}/{path}"
         query = requests.get(url).text.strip()
     return query
@@ -174,7 +178,7 @@ def simple_query(query: str, name: str, timespan: str = "P7D"):
 
 def upload_results(results, blobdest, filenamekeys):
     "Uploads a list of json results as individual files split by timegenerated to a blob destination"
-    blobdest = sanitize_filepath(blobdest)
+    blobdest = clean_path(blobdest)
     with tempfile.TemporaryDirectory() as tmpdir:
         dirnames = set()
         for result in results:
@@ -244,7 +248,7 @@ def global_stats(
     results = analytics_query([ws.customerId for ws in list_workspaces()], query, timespan)
     if blobdest != "":
         blobdest = blobdest.format(querydate=datetime.now().date().isoformat())
-        blobdest = sanitize_filepath(blobdest)
+        blobdest = clean_path(blobdest)
         with tempfile.NamedTemporaryFile(mode="w") as uploadjson:
             json.dump(results, uploadjson, sort_keys=True, indent=2)
             uploadjson.flush()
@@ -262,7 +266,7 @@ email_template = Template((pkgfiles / "templates/email-template.html").read_text
 
 
 def get_datalake_file(path: str):
-    path = sanitize_filepath(path)
+    path = clean_path(path)
     sas = generatesas()
     url = f"{datalake_blob_prefix}/{path}?{sas}"
     cmd = ["az", "storage", "blob", "download", "--blob-url", url, "-f", "/dev/stdout", "--max-connections", "1", "--no-progress", "-o", "none"]
