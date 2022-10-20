@@ -84,7 +84,6 @@ def config_dict(session: dict = default_session):
     Basic validation for session config in json format, to save place the
     `base64` string into the keyvault secret defined with `KEYVAULT_SESSION_SECRET`
     """
-    session = copy.deepcopy(session)  # keep function vars scoped
     return load_session(encode_session(session))
 
 
