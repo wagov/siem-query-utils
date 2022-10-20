@@ -92,7 +92,11 @@ def load_session(data: str, config: dict = default_session):
     Decode and return a session as a json object and the base64 string for easy editing
     """
     config = copy.deepcopy(config)  # keep function vars scoped
-    config.update(json.loads(base64.b64decode(data)))
+    try:
+        config.update(json.loads(base64.b64decode(data)))
+    except Exception as e:
+        logging.warning(e)
+        raise HTTPException(500, "Failed to load session data")
     session = {"session": config, "base64": encode_session(config), "apis": {}}
     session["key"] = hashlib.sha256(session["base64"]).hexdigest()
     for item, data in config.items():
