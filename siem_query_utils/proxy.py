@@ -1,7 +1,7 @@
 import base64
 from distutils.command.clean import clean
 import hashlib
-import json, typing
+import json, copy
 import logging
 from .api import azcli, cache
 
@@ -56,7 +56,7 @@ default_session = {
         # "cookies": {"cookie": "jar"},
     },
     "proxy_jupyter": {"base_url": "https://wagov.github.io/wasoc-jupyterlite"},
-    "main_path": "/jupyter/lab/index.html" # this is redirected to when index is loaded
+    "main_path": "/jupyter/lab/index.html",  # this is redirected to when index is loaded
 }
 
 
@@ -79,18 +79,20 @@ def config_base64(session: str = encode_session(default_session)):
 
 
 @app.post("/config")
-def config_dict(session: dict = default_session.copy()):
+def config_dict(session: dict = default_session):
     """
     Basic validation for session config in json format, to save place the
     `base64` string into the keyvault secret defined with `KEYVAULT_SESSION_SECRET`
     """
+    session = copy.deepcopy(session)  # keep function vars scoped
     return load_session(encode_session(session))
 
 
-def load_session(data: str, config: dict = default_session.copy()):
+def load_session(data: str, config: dict = default_session):
     """
     Decode and return a session as a json object and the base64 string for easy editing
     """
+    config = copy.deepcopy(config)  # keep function vars scoped
     config.update(json.loads(base64.b64decode(data)))
     session = {"session": config, "base64": encode_session(config), "apis": {}}
     session["key"] = hashlib.sha256(session["base64"]).hexdigest()
@@ -136,9 +138,18 @@ def upstream(request: Request, prefix: str, path: str, body=Depends(get_body)):
     # Proxies a request to a defined upstream as defined in session
     headers = filter_headers(request.headers)
     url = httpx.URL(path=path, query=request.url.query.encode("utf-8"))
-    with client(request, prefix).stream(request.method, url, content=body, headers=headers) as origin:
+    upstream_client = client(request, prefix)
+    with upstream_client.stream(request.method, url, content=body, headers=headers) as origin:
+        if "location" in origin.headers:
+            base_url = f"{upstream_client.base_url}/"
+            if origin.headers["location"].startswith(base_url):
+                redir_path = origin.headers["location"].replace(base_url, "", 1)
+                origin.headers["location"] = request.scope.get("root_path") + f"/{prefix}/{redir_path}"
+            elif origin.headers["location"].startswith("http"):
+                raise HTTPException(403, f"Redirect to {origin.headers['location']} not allowed.")
         response = Response(status_code=origin.status_code)
         response.body = b"".join(origin.iter_raw())
         strip_output_headers = ["set-cookie", "transfer-encoding", "content-length", "server", "date", "connection"]
-        response.init_headers(headers=filter_headers(origin.headers, filtered_prefixes=strip_output_headers))
+        headers = filter_headers(origin.headers, filtered_prefixes=strip_output_headers)
+        response.init_headers(headers=headers)
         return response
