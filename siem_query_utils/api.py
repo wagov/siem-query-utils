@@ -1,32 +1,33 @@
+import base64
+import hashlib
+import hmac
 import json
 import os
 import tempfile
-import hmac
-import base64
-import requests
-import hashlib
-from concurrent.futures import ThreadPoolExecutor
-from importlib.resources import files
-from datetime import datetime, timedelta
-from string import Template
-from markdown import markdown
-from flatten_json import flatten
 from collections import namedtuple
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta
+from importlib.resources import read_text
+from pathlib import Path
+from string import Template
 from subprocess import check_output, run
-from dateutil.parser import isoparse
+
+import requests
 from cacheout import Cache
+from dateutil.parser import isoparse
+from fastapi import BackgroundTasks, FastAPI
+from flatten_json import flatten
+from markdown import markdown
 from pathvalidate import sanitize_filepath
-
-
-from fastapi import FastAPI, BackgroundTasks
 
 Workspace = namedtuple("Workspace", "subscription, customerId, resourceGroup, name")
 cache = Cache(maxsize=25600, ttl=300)
-pkgfiles = files(__package__)
 
-def clean_path(path):
+
+def clean_path(path: str):
     # remove any dir traversal and dangerous chars
-    return sanitize_filepath(path).replace("..", "")
+    return sanitize_filepath(path.replace("..", ""))
+
 
 try:
     datalake_blob_prefix = os.environ["DATALAKE_BLOB_PREFIX"]  # e.g. "https://{datalake_account}.blob.core.windows.net/{datalake_container}"
@@ -40,12 +41,10 @@ email_footer = os.environ.get("FOOTER_HTML", "Set FOOTER_HTML env var to configu
 la_customer_id = os.environ.get("LA_CUSTOMERID")
 la_shared_key = os.environ.get("LA_SHAREDKEY")
 
-app_state = {
-    "logged_in": False,
-    "login_time": datetime.utcnow() - timedelta(days=1) # last login 1 day ago to force relogin
-}
+app_state = {"logged_in": False, "login_time": datetime.utcnow() - timedelta(days=1)}  # last login 1 day ago to force relogin
 
 app = FastAPI(title="SIEM Query Utils")
+
 
 @cache.memoize(ttl=60)
 def azcli(cmd: list):
@@ -112,13 +111,17 @@ def login(refresh: bool = False):
             print(e)
             exit()
 
-def loadkql(query):
-    "If query starts with kql/ then load it from a local file and return text"
+
+def loadkql(query: str):
+    "If query starts with kql/ then load it from a package resource and return text"
     if query.startswith("kql/"):
-        query = (pkgfiles / clean_path(query)).read_text().strip()
+        path = Path(__package__) / Path(clean_path(query))
+        print(clean_path(query))
+        query = read_text(package=str(path.parent).replace("/", "."), resource=path.name).strip()
+    # If query starts with kql:// then load it from KQL_BASEURL
     elif query.startswith("kql://"):
         base_url = os.environ["KQL_BASEURL"]
-        path = clean_path(query.replace("kql://", ""))
+        path = clean_path(query.replace("kql://", "", 1))
         url = f"{base_url}/{path}"
         query = requests.get(url).text.strip()
     return query
@@ -262,7 +265,7 @@ def global_stats(
         return results
 
 
-email_template = Template((pkgfiles / "templates/email-template.html").read_text())
+email_template = Template(read_text(f"{__package__}.templates", "email-template.html"))
 
 
 def get_datalake_file(path: str):
@@ -459,7 +462,7 @@ def upload_loganalytics(rows: list, log_type: str):
             if len(hashkeys) == 1:
                 existing_hashes.add(row[hashkeys[0]])  # collect hashes of existing data
     for item in rows:
-        for key in ["TenantId", "tenant", "TimeGenerated", "RawData"]: # rename reserved columns
+        for key in ["TenantId", "tenant", "TimeGenerated", "RawData"]:  # rename reserved columns
             if key in item.keys():
                 item[key + "_orig"] = item.pop(key)
         digest = hashlib.sha256(json.dumps(item, sort_keys=True).encode("utf8")).hexdigest()
@@ -469,7 +472,6 @@ def upload_loganalytics(rows: list, log_type: str):
     method = "POST"
     content_type = "application/json"
     resource = "/api/logs"
-
 
     rfc1123date = datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT")
     content_length = len(body)
@@ -483,7 +485,3 @@ def upload_loganalytics(rows: list, log_type: str):
         print("Accepted")
     else:
         print("Response code: {}".format(response.status_code))
-
-
-
-
