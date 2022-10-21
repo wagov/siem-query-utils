@@ -1,5 +1,4 @@
 import base64
-from distutils.command.clean import clean
 import hashlib
 import json, copy
 import logging

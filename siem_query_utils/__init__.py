@@ -1,4 +1,4 @@
-import uvicorn, os
+import uvicorn, os, logging
 from fire import Fire
 from dotenv import load_dotenv
 
@@ -22,8 +22,10 @@ def index():
 
 def serve():
     # serve on port 8000, assume running behind a trusted reverse proxy
+    log_level = os.environ.get("LOG_LEVEL", "warning")
+    logging.basicConfig(level=log_level.upper())
     host, port = "0.0.0.0", 8000
-    uvicorn.run(app, port=port, host=host, log_level=os.environ.get("LOG_LEVEL", "warning"), proxy_headers=True)
+    uvicorn.run(app, port=port, host=host, log_level=log_level, proxy_headers=True)
 
 
 def cli():

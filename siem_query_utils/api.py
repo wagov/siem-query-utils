@@ -4,6 +4,7 @@ import hmac
 import json
 import os
 import tempfile
+import logging
 from collections import namedtuple
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
@@ -15,7 +16,7 @@ from subprocess import check_output, run
 import requests
 from cacheout import Cache
 from dateutil.parser import isoparse
-from fastapi import BackgroundTasks, FastAPI
+from fastapi import BackgroundTasks, FastAPI, HTTPException
 from flatten_json import flatten
 from markdown import markdown
 from pathvalidate import sanitize_filepath
@@ -38,8 +39,6 @@ except:
     raise Exception("Please set DATALAKE_BLOB_PREFIX and DATALAKE_SUBSCRIPTION env vars")
 
 email_footer = os.environ.get("FOOTER_HTML", "Set FOOTER_HTML env var to configure this...")
-la_customer_id = os.environ.get("LA_CUSTOMERID")
-la_shared_key = os.environ.get("LA_SHAREDKEY")
 
 app_state = {"logged_in": False, "login_time": datetime.utcnow() - timedelta(days=1)}  # last login 1 day ago to force relogin
 
@@ -54,10 +53,12 @@ def azcli(cmd: list):
     elif not app_state["logged_in"]:
         login()
     cmd = ["az"] + cmd + ["--only-show-errors", "-o", "json"]
+    logging.debug(" ".join(cmd))
+    result = False
     try:
         result = check_output(cmd)
     except Exception as e:
-        return {"error": repr(e)}
+        logging.error(e)
     if not result:
         return None
     return json.loads(result)
@@ -99,7 +100,7 @@ def login(refresh: bool = False):
             app_state["login_time"] = datetime.utcnow()
         except Exception as e:
             # bail as we aren't able to login
-            print(e)
+            logging.error(e)
             exit()
     else:
         try:
@@ -108,7 +109,7 @@ def login(refresh: bool = False):
             app_state["login_time"] = datetime.utcnow()
         except Exception as e:
             # bail as we aren't able to login
-            print(e)
+            logging.error(e)
             exit()
 
 
@@ -116,7 +117,6 @@ def loadkql(query: str):
     "If query starts with kql/ then load it from a package resource and return text"
     if query.startswith("kql/"):
         path = Path(__package__) / Path(clean_path(query))
-        print(clean_path(query))
         query = read_text(package=str(path.parent).replace("/", "."), resource=path.name).strip()
     # If query starts with kql:// then load it from KQL_BASEURL
     elif query.startswith("kql://"):
@@ -124,17 +124,18 @@ def loadkql(query: str):
         path = clean_path(query.replace("kql://", "", 1))
         url = f"{base_url}/{path}"
         query = requests.get(url).text.strip()
+    logging.info(query)
     return query
 
 
 def analytics_query(workspaces: list, query: str, timespan: str = "P7D", outputfilter: str = ""):
     "Queries a list of workspaces using kusto"
-    print(f"Log analytics query across {len(workspaces)} workspaces")
     query = loadkql(query)
     chunkSize = 20  # limit to 20 parallel workspaces at a time https://docs.microsoft.com/en-us/azure/azure-monitor/logs/cross-workspace-query#cross-resource-query-limits
     chunks = [
         sorted(workspaces)[x : x + chunkSize] for x in range(0, len(workspaces), chunkSize)
     ]  # awesome list comprehension to break big list into chunks of chunkSize
+    logging.info(f"Log analytics query across {len(workspaces)} workspace(s) ({len(chunks)} chunks).")
     # chunks = [[1..10],[11..20]]
     results, cmds = [], []
     for chunk in chunks:
@@ -208,7 +209,7 @@ def upload_results(results, blobdest, filenamekeys):
             "--recursive=true",
             "--as-subdir=false",
         ]
-        print(cmd)
+        logging.info(cmd)
         run(cmd)
 
 
@@ -223,13 +224,11 @@ def global_query(
     Results are saved as individual .json files, and overwritten if they already exist.
     Filenamekeys are a comma separated list of keys to build filename from
     """
-    if loganalyticsdest:
-        assert la_customer_id and la_shared_key  # die if no env vars set
     results = analytics_query([ws.customerId for ws in list_workspaces()], query, timespan)
     if blobdest != "":
         tasks.add_task(upload_results, results, blobdest, filenamekeys)
     if loganalyticsdest != "":
-        upload_loganalytics(results, loganalyticsdest)
+        tasks.add_task(upload_loganalytics, results, loganalyticsdest)
     if count:
         return len(results)
     else:
@@ -257,7 +256,7 @@ def global_stats(
             uploadjson.flush()
             sas = generatesas()
             cmd = ["azcopy", "cp", uploadjson.name, f"{datalake_blob_prefix}/{blobdest}?{sas}", "--put-md5", "--overwrite=true"]
-            print(cmd)
+            logging.info(cmd)
             run(cmd)
     if count:
         return len(results)
@@ -365,7 +364,7 @@ def sentinel_beautify(blob_path: str):
                 url = f"sentinel_outputs/alerts/{data['LastActivityTime'].split('T')[0]}/{data['TenantId']}_{alertid}.json"
                 alert = get_datalake_file(url)
             except Exception as e:  # alert may not exist on day of last activity time
-                print(e)
+                logging.warning(e)
                 break
             else:
                 if not alert_details:
@@ -451,9 +450,15 @@ def build_la_signature(customer_id, shared_key, date, content_length, method, co
 
 # Build and send a request to the Log Analytics POST API
 def upload_loganalytics(rows: list, log_type: str):
-    assert la_customer_id and la_shared_key  # die if no env vars set
+    subscription, resourcegroup, workspacename = os.environ["AZMONITOR_DATA_COLLECTOR"].split("/")
+    la_customer_id = azcli(
+        ["monitor", "log-analytics", "workspace", "show", "--subscription", subscription, "--resource-group", resourcegroup, "--name", workspacename]
+    )["customerId"]
+    la_shared_key = azcli(
+        ["monitor", "log-analytics", "workspace", "get-shared-keys", "--subscription", subscription, "--resource-group", resourcegroup, "--name", workspacename]
+    )["primarySharedKey"]
     table_name = f"{log_type}_CL"
-    existing_data = analytics_query([la_customer_id], table_name, "P1D")  # Scan past 24 hours for duplicates
+    existing_data = analytics_query([la_customer_id], table_name, "P7D")  # Scan past 7 days for duplicates
     existing_hashes = set()
     digest_column = "_row_sha256"
     for row in existing_data:
@@ -468,20 +473,24 @@ def upload_loganalytics(rows: list, log_type: str):
         digest = hashlib.sha256(json.dumps(item, sort_keys=True).encode("utf8")).hexdigest()
         if digest not in existing_hashes:
             item[digest_column] = digest  # only add digest for new rows
-    body = json.dumps([item for item in rows if digest_column in item.keys()])  # dump new rows ready for upload
-    method = "POST"
-    content_type = "application/json"
-    resource = "/api/logs"
+    rows = [item for item in rows if digest_column in item.keys()]
+    rowsize = len(json.dumps(rows[0]).encode("utf8"))
+    chunkSize = int(20 * 1024 * 1024 / rowsize)  # 20MB max size
+    chunks = [rows[x : x + chunkSize] for x in range(0, len(rows), chunkSize)]
+    for rows in chunks:
+        body = json.dumps(rows)  # dump new rows ready for upload
+        method = "POST"
+        content_type = "application/json"
+        resource = "/api/logs"
 
-    rfc1123date = datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT")
-    content_length = len(body)
-    signature = build_la_signature(la_customer_id, la_shared_key, rfc1123date, content_length, method, content_type, resource)
-    uri = "https://" + la_customer_id + ".ods.opinsights.azure.com" + resource + "?api-version=2016-04-01"
+        rfc1123date = datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT")
+        content_length = len(body)
+        logging.info(f"Uploading {content_length} bytes to {table_name}")
+        signature = build_la_signature(la_customer_id, la_shared_key, rfc1123date, content_length, method, content_type, resource)
+        uri = "https://" + la_customer_id + ".ods.opinsights.azure.com" + resource + "?api-version=2016-04-01"
 
-    headers = {"content-type": content_type, "Authorization": signature, "Log-Type": log_type, "x-ms-date": rfc1123date}
+        headers = {"content-type": content_type, "Authorization": signature, "Log-Type": log_type, "x-ms-date": rfc1123date}
 
-    response = requests.post(uri, data=body, headers=headers)
-    if response.status_code >= 200 and response.status_code <= 299:
-        print("Accepted")
-    else:
-        print("Response code: {}".format(response.status_code))
+        response = requests.post(uri, data=body, headers=headers)
+        if response.status_code >= 300:
+            raise HTTPException(response.status_code, response.text)
