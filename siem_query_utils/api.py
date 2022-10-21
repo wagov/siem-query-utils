@@ -43,6 +43,7 @@ email_footer = os.environ.get("FOOTER_HTML", "Set FOOTER_HTML env var to configu
 app_state = {"logged_in": False, "login_time": datetime.utcnow() - timedelta(days=1)}  # last login 1 day ago to force relogin
 
 app = FastAPI(title="SIEM Query Utils")
+apiv2 = FastAPI(title="SIEM Query Utils v2")
 
 
 @cache.memoize(ttl=60)
@@ -446,6 +447,22 @@ def build_la_signature(customer_id, shared_key, date, content_length, method, co
     encoded_hash = base64.b64encode(hmac.new(decoded_key, bytes_to_hash, digestmod=hashlib.sha256).digest()).decode()
     authorization = "SharedKey {}:{}".format(customer_id, encoded_hash)
     return authorization
+
+
+@apiv2.post("/collect")
+def collect(query: str, table: str, timespan: str = "P7D"):
+    # Collects query results into a central table
+    return global_query(query, loganalyticsdest=table, timespan=timespan, count=True)
+
+
+@apiv2.post("/summarise")
+def summarise(query: str, blobpath: str, timespan: str = "P7D"):
+    return global_stats(query, blobdest=blobpath, timespan=timespan, count=True)
+
+
+@apiv2.post("/export")
+def export(query: str, blobpath: str, filenamekeys: str, timespan: str = "P7D"):
+    return global_query(query, blobdest=blobpath, timespan=timespan, filenamekeys=filenamekeys, count=True)
 
 
 # Build and send a request to the Log Analytics POST API
