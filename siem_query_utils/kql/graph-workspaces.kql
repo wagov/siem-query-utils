@@ -1,8 +1,0 @@
-Resources
-| where type == 'microsoft.operationalinsights/workspaces'
-| project id, name, resourceGroup, subscription = subscriptionId, customerId = tostring(properties.customerId)
-| join (Resources
-    | where type == 'microsoft.operationsmanagement/solutions' and plan.product contains 'security'
-    | project name = tostring(split(properties.workspaceResourceId, '/')[-1])
-) on name
-| distinct subscription, customerId, name, resourceGroup

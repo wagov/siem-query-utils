@@ -19,6 +19,9 @@ flatten-json = "^0.1.13"
 pathvalidate = "^2.5.2"
 python-dotenv = "^0.21.0"
 httpx-cache = "^0.6.1"
+cloudpathlib = "^0.10.0"
+azure-storage-blob = "^12.14.1"
+pandas = "^1.5.1"
 
 [tool.poetry.scripts]
 siem_query_utils = "siem_query_utils:cli"

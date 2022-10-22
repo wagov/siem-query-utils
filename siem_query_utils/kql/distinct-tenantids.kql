@@ -1,6 +1,0 @@
-let Now = now();
-let timeago = 60d;
-range TimeGenerated from ago(timeago) to Now step timeago
-| union isfuzzy=true (SecurityAlert | summarize count() by bin_at(TimeGenerated, timeago, Now), TenantId)
-| where count_ > 0
-

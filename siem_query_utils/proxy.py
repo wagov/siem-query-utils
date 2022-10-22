@@ -11,9 +11,10 @@ from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.responses import Response, RedirectResponse
 from starlette.middleware.sessions import SessionMiddleware
 
+logger = logging.getLogger("uvicorn.error")
 
-app = FastAPI()
-app.add_middleware(SessionMiddleware, secret_key=token_urlsafe(), session_cookie="fastapi_jupyterlite", same_site="strict")
+proxy_1 = FastAPI(title="JupyterLite authenticating proxy for api access")
+proxy_1.add_middleware(SessionMiddleware, secret_key=token_urlsafe(), session_cookie="fastapi_jupyterlite", same_site="strict")
 sessions = {}  # global cache of sessions and async clients
 
 
@@ -30,7 +31,7 @@ def boot(secret):
     # cache session creds for an hour
     secret = azcli(["keyvault", "secret", "show", "--id", secret])
     if "error" in secret:
-        logging.warning(secret["error"])
+        logger.warning(secret["error"])
         raise HTTPException(403, "KEYVAULT_SESSION_SECRET not available")
     return secret["value"]
 
@@ -59,7 +60,7 @@ default_session = {
 }
 
 
-@app.get("/main_path")
+@proxy_1.get("/main_path")
 def main_path(request: Request):
     return RedirectResponse(request.scope.get("root_path") + _session(request)["main_path"])
 
@@ -68,7 +69,7 @@ def encode_session(session: dict):
     return base64.b64encode(json.dumps(session, sort_keys=True).encode("utf8"))
 
 
-@app.post("/config_base64")
+@proxy_1.post("/config_base64")
 def config_base64(session: str = encode_session(default_session)):
     """
     Basic validation for session confi in base64 format, to save place the
@@ -77,7 +78,7 @@ def config_base64(session: str = encode_session(default_session)):
     return load_session(session)
 
 
-@app.post("/config")
+@proxy_1.post("/config")
 def config_dict(session: dict = default_session):
     """
     Basic validation for session config in json format, to save place the
@@ -94,7 +95,7 @@ def load_session(data: str, config: dict = default_session):
     try:
         config.update(json.loads(base64.b64decode(data)))
     except Exception as e:
-        logging.warning(e)
+        logger.warning(e)
         raise HTTPException(500, "Failed to load session data")
     session = {"session": config, "base64": encode_session(config), "apis": {}}
     session["key"] = hashlib.sha256(session["base64"]).hexdigest()
@@ -106,7 +107,7 @@ def load_session(data: str, config: dict = default_session):
     return session
 
 
-@app.get("/apis")
+@proxy_1.get("/apis")
 def apis(request: Request) -> dict:
     # Returns configured origins
     return _session(request, key="apis")
@@ -135,7 +136,7 @@ async def get_body(request: Request):
     return await request.body()
 
 
-@app.get("/{prefix}/{path:path}", response_class=Response)
+@proxy_1.get("/{prefix}/{path:path}", response_class=Response)
 def upstream(request: Request, prefix: str, path: str, body=Depends(get_body)):
     # Proxies a request to a defined upstream as defined in session
     headers = filter_headers(request.headers)

@@ -1,19 +1,21 @@
-import uvicorn, os, logging
-from fire import Fire
+import os
+
+import uvicorn
 from dotenv import load_dotenv
+from fire import Fire
 
 load_dotenv()
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
-from .api import list_workspaces, simple_query, global_query, global_stats
-from .api import apiv2, app as api
-from .proxy import app as proxy
+
+from .api import api_1, api_2, global_query, global_stats, list_workspaces, simple_query
+from .proxy import proxy_1
 
 app = FastAPI()
-app.mount("/api/v1", api)
-app.mount("/api/v2", apiv2)
-app.mount("/proxy", proxy)
+app.mount("/api/v1", api_1)
+app.mount("/api/v2", api_2)
+app.mount("/proxy", proxy_1)
 
 
 @app.get("/")
@@ -23,10 +25,8 @@ def index():
 
 def serve():
     # serve on port 8000, assume running behind a trusted reverse proxy
-    log_level = os.environ.get("LOG_LEVEL", "warning")
-    logging.basicConfig(level=log_level.upper())
     host, port = "0.0.0.0", 8000
-    uvicorn.run(app, port=port, host=host, log_level=log_level, proxy_headers=True)
+    uvicorn.run(app, port=port, host=host, log_level=os.environ.get("LOG_LEVEL", "WARNING").lower(), proxy_headers=True)
 
 
 def cli():
