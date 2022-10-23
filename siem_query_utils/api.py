@@ -58,6 +58,7 @@ class OutputFormat(str, Enum):
     json = "json"
     csv = "csv"
     list = "list"
+    df = "df"
 
 
 @cache.memoize(ttl=60)
@@ -197,7 +198,7 @@ def list_workspaces(format: OutputFormat = OutputFormat.list):
         return df.fillna('').to_dict('records')
     elif format == OutputFormat.csv:
         return df.to_csv()
-    else:
+    elif format == OutputFormat.df:
         return df
 
 
