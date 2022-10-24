@@ -1,19 +1,23 @@
 import base64
+import copy
 import hashlib
-import json, copy
+import importlib
+import json
 import logging
-from .api import azcli, cache
-
-import httpx, httpx_cache, os
-
+import os
 from secrets import token_urlsafe
-from fastapi import FastAPI, Request, HTTPException, Depends
-from fastapi.responses import Response, RedirectResponse
+
+import httpx
+import httpx_cache
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.responses import RedirectResponse, Response
 from starlette.middleware.sessions import SessionMiddleware
+
+from .api import azcli, cache
 
 logger = logging.getLogger("uvicorn.error")
 
-proxy_1 = FastAPI(title="JupyterLite authenticating proxy for api access")
+proxy_1 = FastAPI(title="SIEM Query Utils authenticating proxy for api access", version=importlib.metadata.version(__package__))
 proxy_1.add_middleware(SessionMiddleware, secret_key=token_urlsafe(), session_cookie="fastapi_jupyterlite", same_site="strict")
 sessions = {}  # global cache of sessions and async clients
 

@@ -1497,6 +1497,9 @@ category = "main"
 optional = false
 python-versions = ">=3.7"
 
+[package.dependencies]
+azure-storage-blob = {version = ">=12", optional = true, markers = "extra == \"azure\""}
+
 [package.extras]
 all = ["azure-storage-blob (>=12)", "boto3", "google-cloud-storage"]
 azure = ["azure-storage-blob (>=12)"]
@@ -2659,7 +2662,7 @@ python-versions = ">=3.4"
 [metadata]
 lock-version = "1.1"
 python-versions = "^3.10"
-content-hash = "fd8f347e7934d4d13dfa1a2ef440d8564c0e2a7392b648c89ea3699ef9817ddb"
+content-hash = "37f29d12c6a7c6f1f716244fefba0052c7439415d05d8dd50afd57b83051b985"
 
 [metadata.files]
 adal = [

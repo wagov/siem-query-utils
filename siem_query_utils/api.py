@@ -1,31 +1,31 @@
 import base64
 import hashlib
 import hmac
+import importlib
 import json
 import logging
 import os
 from collections import namedtuple
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
-from importlib.resources import read_text
-from pathlib import Path
 from enum import Enum
-from string import Template
 from mimetypes import guess_type
-from typing import Optional
+from pathlib import Path
+from string import Template
+from typing import Any, Optional
 
-
-import requests, pandas
+import pandas
+import requests
+from azure.cli.core import get_default_cli
 from azure.storage.blob import BlobServiceClient
 from cacheout import Cache
 from cloudpathlib import AzureBlobClient
 from dateutil.parser import isoparse
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Body
+from fastapi import BackgroundTasks, Body, FastAPI, HTTPException
 from fastapi.responses import Response
 from flatten_json import flatten
 from markdown import markdown
 from pathvalidate import sanitize_filepath
-from azure.cli.core import get_default_cli
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -51,8 +51,8 @@ max_threads = int(os.environ.get("MAX_THREADS", "20"))
 
 app_state = {"logged_in": False, "login_time": datetime.utcnow() - timedelta(days=1)}  # last login 1 day ago to force relogin
 
-api_1 = FastAPI(title="SIEM Query Utils v1")
-api_2 = FastAPI(title="SIEM Query Utils v2")
+api_1 = FastAPI(title="SIEM Query Utils API v1", version=importlib.metadata.version(__package__))
+api_2 = FastAPI(title="SIEM Query Utils API v2", version=importlib.metadata.version(__package__))
 
 
 class OutputFormat(str, Enum):
@@ -63,7 +63,7 @@ class OutputFormat(str, Enum):
 
 
 @cache.memoize(ttl=60)
-def azcli(cmd: list, error_result=None):
+def azcli(cmd: list, error_result: Any = None):
     "Run a general azure cli cmd, if as_df True return as dataframe"
     if datetime.utcnow() - app_state["login_time"] > timedelta(hours=1):
         login(refresh=True)
@@ -152,7 +152,7 @@ def loadkql(query: str):
     "If query starts with kql/ then load it from a package resource and return text"
     if query.startswith("kql/"):
         path = Path(__package__) / Path(clean_path(query))
-        query = read_text(package=str(path.parent).replace("/", "."), resource=path.name).strip()
+        query = importlib.resources.read_text(package=str(path.parent).replace("/", "."), resource=path.name).strip()
     # If query starts with kql:// then load it from KQL_BASEURL
     elif query.startswith("kql://"):
         base_url = os.environ["KQL_BASEURL"]
@@ -278,7 +278,7 @@ def global_stats(
         return results
 
 
-email_template = Template(read_text(f"{__package__}.templates", "email-template.html"))
+email_template = Template(importlib.resources.read_text(f"{__package__}.templates", "email-template.html"))
 datalake_path = BlobPath(datalake_blob_prefix, datalake_subscription)
 
 
