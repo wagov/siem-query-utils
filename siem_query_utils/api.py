@@ -4,7 +4,6 @@ import hmac
 import json
 import logging
 import os
-import tempfile
 from collections import namedtuple
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
@@ -12,8 +11,8 @@ from importlib.resources import read_text
 from pathlib import Path
 from enum import Enum
 from string import Template
-from subprocess import check_output, run
 from mimetypes import guess_type
+from typing import Optional
 
 
 import requests, pandas
@@ -26,6 +25,7 @@ from fastapi.responses import Response
 from flatten_json import flatten
 from markdown import markdown
 from pathvalidate import sanitize_filepath
+from azure.cli.core import get_default_cli
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -47,6 +47,7 @@ except:
     raise Exception("Please set DATALAKE_BLOB_PREFIX and DATALAKE_SUBSCRIPTION env vars")
 
 email_footer = os.environ.get("FOOTER_HTML", "Set FOOTER_HTML env var to configure this...")
+max_threads = int(os.environ.get("MAX_THREADS", "20"))
 
 app_state = {"logged_in": False, "login_time": datetime.utcnow() - timedelta(days=1)}  # last login 1 day ago to force relogin
 
@@ -68,26 +69,30 @@ def azcli(cmd: list, error_result=None):
         login(refresh=True)
     elif not app_state["logged_in"]:
         login()
-    cmd = ["az"] + cmd + ["--only-show-errors", "-o", "json"]
+    cmd += ["--only-show-errors", "-o", "json"]
+    cli = get_default_cli()
     logger.debug(" ".join(cmd))
-    try:
-        return json.loads(check_output(cmd))
-    except Exception as e:
-        logger.warning(e)
+    cli.invoke(cmd, out_file=open(os.devnull, "w"))
+    if cli.result.error:
+        logger.warning(cli.result.error)
         if error_result is not None:
-            raise
+            raise cli.result.error
         else:
             return error_result
+    return cli.result.result
 
 
 @cache.memoize(ttl=60 * 60 * 24)  # cache sas tokens 1 day
 def generatesas(account=datalake_account, container=datalake_container, subscription=datalake_subscription, permissions="racwdlt", expiry_days=3):
     expiry = str(datetime.today().date() + timedelta(days=expiry_days))
-    return azcli(
+    result = azcli(
         [
             "storage",
             "container",
             "generate-sas",
+            "--auth-mode",
+            "login",
+            "--as-user",
             "--account-name",
             account,
             "-n",
@@ -100,6 +105,8 @@ def generatesas(account=datalake_account, container=datalake_container, subscrip
             expiry,
         ]
     )
+    logger.debug(result)
+    return result
 
 
 def BlobPath(url: str, subscription: str = ""):
@@ -117,24 +124,22 @@ def BlobPath(url: str, subscription: str = ""):
 
 
 def login(refresh: bool = False):
+    cli = get_default_cli()
     if os.environ.get("IDENTITY_HEADER"):
         if refresh:
-            try:
-                check_output(["az", "logout", "--only-show-errors", "-o", "json"])
-            except Exception as e:
-                pass
+            cli.invoke(["logout", "--only-show-errors", "-o", "json"], out_file=open(os.devnull, "w"))
         # Use managed service identity to login
-        try:
-            check_output(["az", "login", "--identity", "--only-show-errors", "-o", "json"])
-            app_state["logged_in"] = True
-            app_state["login_time"] = datetime.utcnow()
-        except Exception as e:
+        loginstatus = cli.invoke(["login", "--identity", "--only-show-errors", "-o", "json"], out_file=open(os.devnull, "w"))
+        if cli.result.error:
             # bail as we aren't able to login
-            logger.error(e)
-            exit()
+            logger.error(cli.result.error)
+            exit(loginstatus)
+        app_state["logged_in"] = True
+        app_state["login_time"] = datetime.utcnow()
     else:
+        loginstatus = cli.invoke(["account", "show", "-o", "json"], out_file=open(os.devnull, "w"))
         try:
-            json.loads(check_output(["az", "account", "show", "-o", "json"]))["environmentName"]
+            cli.result.result["environmentName"]
             app_state["logged_in"] = True
             app_state["login_time"] = datetime.utcnow()
         except Exception as e:
@@ -174,7 +179,7 @@ def analytics_query(workspaces: list, query: str, timespan: str = "P7D", groupQu
             pass
     # run each query separately and stitch results, 20 at a time.
     results = []
-    with ThreadPoolExecutor(max_workers=20) as executor:
+    with ThreadPoolExecutor(max_workers=max_threads) as executor:
         futures = {ws: executor.submit(azcli, cmd_base + ["--workspace", ws], error_result=[]) for ws in workspaces}
         for ws, future in futures.items():
             result = future.result()
@@ -195,7 +200,7 @@ def list_workspaces(format: OutputFormat = OutputFormat.list):
     if format == OutputFormat.list:
         return list(df.customerId.dropna())
     elif format == OutputFormat.json:
-        return df.fillna('').to_dict('records')
+        return df.fillna("").to_dict("records")
     elif format == OutputFormat.csv:
         return df.to_csv()
     elif format == OutputFormat.df:
@@ -213,39 +218,24 @@ def simple_query(query: str, name: str, timespan: str = "P7D"):
 def upload_results(results, blobdest, filenamekeys):
     "Uploads a list of json results as individual files split by timegenerated to a blob destination"
     blobdest = clean_path(blobdest)
-    with tempfile.TemporaryDirectory() as tmpdir:
-        dirnames = set()
+    with ThreadPoolExecutor(max_workers=max_threads) as executor:
         for result in results:
             dirname = f"{result['TimeGenerated'].split('T')[0]}"
-            dirnames.add(dirname)
-            modifiedtime = isoparse(result["TimeGenerated"])
             filename = "_".join([result[key] for key in filenamekeys.split(",")]) + ".json"
-            if not os.path.exists(f"{tmpdir}/{dirname}"):
-                os.mkdir(f"{tmpdir}/{dirname}")
-            with open(f"{tmpdir}/{dirname}/{filename}", "w") as jsonfile:
-                json.dump(result, jsonfile, sort_keys=True, indent=2)
-            os.utime(
-                f"{tmpdir}/{dirname}/{filename}",
-                (modifiedtime.timestamp(), modifiedtime.timestamp()),
-            )
-        sas = generatesas()
-        cmd = [
-            "azcopy",
-            "cp",
-            tmpdir,
-            f"{datalake_blob_prefix}/{blobdest}?{sas}",
-            "--put-md5",
-            "--overwrite=ifSourceNewer",
-            "--recursive=true",
-            "--as-subdir=false",
-        ]
-        logger.info(cmd)
-        run(cmd)
+            executor.submit(datalake_json, path=f"{blobdest}/{dirname}/{filename}", content=result, modified_key="TimeGenerated")
+    logger.debug(f"Uploaded {len(results)} results.")
 
 
 @api_1.get("/globalQuery")
 def global_query(
-    query: str, tasks: BackgroundTasks, timespan: str = "P7D", count: bool = False, groupQueries: bool = True, blobdest: str = "", loganalyticsdest: str = "", filenamekeys: str = ""
+    query: str,
+    tasks: BackgroundTasks,
+    timespan: str = "P7D",
+    count: bool = False,
+    groupQueries: bool = True,
+    blobdest: str = "",
+    loganalyticsdest: str = "",
+    filenamekeys: str = "",
 ):
     """
     Query all workspaces with SecurityIncident tables using kusto.
@@ -301,15 +291,19 @@ def datalake(path):
     return Response(content=path.read_bytes(), media_type=guess_type(path.name)[0])
 
 
-def datalake_json(path: str, content=None):
+def datalake_json(path: str, content=None, modified_key: Optional[str] = None):
     # retrieves or uploads a json file from the datalake
     path = datalake_path / clean_path(path)
-    if content is not None:
-        result = json.dumps(content, sort_keys=True)
-        path.write_text(result)
-    else:
-        result = json.loads(path.read_text())
-    return result
+    if content is None:
+        return json.loads(path.read_text())
+    elif modified_key and modified_key in content and path.exists():
+        # Contrast the actual blob content for its modified time
+        source_mtime, dest_mtime = isoparse(content[modified_key]), isoparse(json.loads(path.read_text())[modified_key])
+        if source_mtime >= dest_mtime:
+            return content
+    logger.debug(f"Uploading {path}.")
+    path.write_text(json.dumps(content, sort_keys=True, indent=2))
+    return content
 
 
 @api_1.get("/sentinelBeautify")

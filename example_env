@@ -5,3 +5,4 @@ KQL_BASEURL={https_kql_repository}
 TENANT_ID={tenantid}
 KEYVAULT_SESSION_SECRET=https://{vault}.vault.azure.net/secrets/{secretname}
 LOG_LEVEL=DEBUG
+MAX_THREADS=20
