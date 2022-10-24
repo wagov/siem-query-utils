@@ -549,6 +549,9 @@ def upload_loganalytics(rows: list, log_type: str):
         if digest not in existing_hashes:
             item[digest_column] = digest  # only add digest for new rows
     rows = [item for item in rows if digest_column in item.keys()]
+    if len(rows) == 0:
+        logger.info("Nothing to upload")
+        return
     rowsize = len(json.dumps(rows[0]).encode("utf8"))
     chunkSize = int(20 * 1024 * 1024 / rowsize)  # 20MB max size
     chunks = [rows[x : x + chunkSize] for x in range(0, len(rows), chunkSize)]
