@@ -142,7 +142,7 @@ def BlobPath(url: str, subscription: str = ""):
         return Path(clean_path(url))
     account, container = url.split("/")[2:]
     account = account.split(".")[0]
-    sas = generatesas(account, container, subscription, expiry_days=7)
+    sas = generatesas(account, container, subscription)
     blobclient = AzureBlobClient(blob_service_client=BlobServiceClient(account_url=url.replace(f"/{container}", ""), credential=sas))
     return blobclient.CloudPath(f"az://{container}")
 

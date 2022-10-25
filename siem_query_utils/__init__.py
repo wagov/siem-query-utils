@@ -4,6 +4,7 @@ import os
 import uvicorn
 from dotenv import load_dotenv
 from fire import Fire
+from subprocess import Popen
 
 load_dotenv()
 
@@ -22,9 +23,12 @@ app.mount("/proxy", proxy_1)
 def index():
     return RedirectResponse("/proxy/main_path")
 
+def atlaskit_serve():
+    Popen("node atlaskit-transformer/main.mjs", shell=True, close_fds=True)
 
 def serve():
     # serve on port 8000, assume running behind a trusted reverse proxy
+    atlaskit_serve() # launch background node helper on port 3000
     host, port = "0.0.0.0", 8000
     uvicorn.run(app, port=port, host=host, log_level=os.environ.get("LOG_LEVEL", "WARNING").lower(), proxy_headers=True)
 

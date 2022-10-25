@@ -1,0 +1,18 @@
+{
+  "name": "atlaskit-transformer",
+  "version": "0.1.0",
+  "description": "",
+  "main": "main.mjs",
+  "scripts": {
+    "start": "node ./main.mjs"
+  },
+  "type": "module",
+  "keywords": [],
+  "author": "",
+  "dependencies": {
+    "@atlaskit/editor-json-transformer": "^8.8.1",
+    "@atlaskit/editor-markdown-transformer": "^4.2.16",
+    "@atlaskit/editor-wikimarkup-transformer": "^11.1.7",
+    "fastify": "^4.9.2"
+  }
+}

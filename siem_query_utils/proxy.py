@@ -1,5 +1,6 @@
 import base64
 import copy
+from enum import Enum
 import hashlib
 import importlib
 import json
@@ -9,7 +10,7 @@ from secrets import token_urlsafe
 
 import httpx
 import httpx_cache
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request, Body
 from fastapi.responses import RedirectResponse, Response
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -138,6 +139,21 @@ def filter_headers(headers: dict, filtered_prefixes=["host", "cookie", "x-ms-", 
 async def get_body(request: Request):
     # wrapper to allow sync access of body
     return await request.body()
+
+
+class atlaskitfmt(str, Enum):
+    markdown = "md"
+    json = "adf"
+    wikimarkup = "wiki"
+
+@proxy_1.post("/atlaskit/{input}/to/{output}")
+def atlaskit(request: Request, input: atlaskitfmt, output: atlaskitfmt, body = Body("# Test Header", media_type="text/plain")):
+    """
+    Converts between atlaskit formats using js modules.
+    """
+    client = httpx_client({"base_url": "http://127.0.0.1:3000"})
+    origin = client.post(f"/{input}/to/{output}", content=body, headers={"content-type": request.headers["content-type"]})
+    return Response(status_code=origin.status_code, content=origin.content)
 
 
 @proxy_1.get("/{prefix}/{path:path}", response_class=Response)
