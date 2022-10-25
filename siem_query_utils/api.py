@@ -22,7 +22,7 @@ from cacheout import Cache
 from cloudpathlib import AzureBlobClient
 from dateutil.parser import isoparse
 from fastapi import BackgroundTasks, Body, FastAPI, HTTPException
-from fastapi.responses import Response
+from fastapi.responses import StreamingResponse, PlainTextResponse
 from flatten_json import flatten
 from markdown import markdown
 from pathvalidate import sanitize_filepath
@@ -51,7 +51,6 @@ max_threads = int(os.environ.get("MAX_THREADS", "20"))
 
 app_state = {"logged_in": False, "login_time": datetime.utcnow() - timedelta(days=1)}  # last login 1 day ago to force relogin
 
-api_1 = FastAPI(title="SIEM Query Utils API v1", version=importlib.metadata.version(__package__))
 api_2 = FastAPI(title="SIEM Query Utils API v2", version=importlib.metadata.version(__package__))
 
 
@@ -60,6 +59,31 @@ class OutputFormat(str, Enum):
     csv = "csv"
     list = "list"
     df = "df"
+
+
+def login(refresh: bool = False):
+    cli = get_default_cli()
+    if os.environ.get("IDENTITY_HEADER"):
+        if refresh:
+            cli.invoke(["logout", "--only-show-errors", "-o", "json"], out_file=open(os.devnull, "w"))
+        # Use managed service identity to login
+        loginstatus = cli.invoke(["login", "--identity", "--only-show-errors", "-o", "json"], out_file=open(os.devnull, "w"))
+        if cli.result.error:
+            # bail as we aren't able to login
+            logger.error(cli.result.error)
+            exit(loginstatus)
+        app_state["logged_in"] = True
+        app_state["login_time"] = datetime.utcnow()
+    else:
+        loginstatus = cli.invoke(["account", "show", "-o", "json"], out_file=open(os.devnull, "w"))
+        try:
+            cli.result.result["environmentName"]
+            app_state["logged_in"] = True
+            app_state["login_time"] = datetime.utcnow()
+        except Exception as e:
+            # bail as we aren't able to login
+            logger.error(e)
+            exit()
 
 
 @cache.memoize(ttl=60)
@@ -123,33 +147,43 @@ def BlobPath(url: str, subscription: str = ""):
     return blobclient.CloudPath(f"az://{container}")
 
 
-def login(refresh: bool = False):
-    cli = get_default_cli()
-    if os.environ.get("IDENTITY_HEADER"):
-        if refresh:
-            cli.invoke(["logout", "--only-show-errors", "-o", "json"], out_file=open(os.devnull, "w"))
-        # Use managed service identity to login
-        loginstatus = cli.invoke(["login", "--identity", "--only-show-errors", "-o", "json"], out_file=open(os.devnull, "w"))
-        if cli.result.error:
-            # bail as we aren't able to login
-            logger.error(cli.result.error)
-            exit(loginstatus)
-        app_state["logged_in"] = True
-        app_state["login_time"] = datetime.utcnow()
-    else:
-        loginstatus = cli.invoke(["account", "show", "-o", "json"], out_file=open(os.devnull, "w"))
-        try:
-            cli.result.result["environmentName"]
-            app_state["logged_in"] = True
-            app_state["login_time"] = datetime.utcnow()
-        except Exception as e:
-            # bail as we aren't able to login
-            logger.error(e)
-            exit()
+email_template = Template(importlib.resources.read_text(f"{__package__}.templates", "email-template.html"))
+datalake_path = BlobPath(datalake_blob_prefix, datalake_subscription)
 
 
-def loadkql(query: str):
-    "If query starts with kql/ then load it from a package resource and return text"
+@api_2.get("/datalake/{path:path}")
+def datalake(path: str):
+    """
+    Downloads a file from the datalake, e.g. `notebooks/lists/SentinelWorkspaces.csv`
+    """
+    path = datalake_path / clean_path(path)
+    if not path.exists():
+        logger.warning(path)
+        raise HTTPException(404, f"{path} not found")
+    return StreamingResponse(content=path.open(), media_type=guess_type(path.name)[0])
+
+
+def datalake_json(path: str, content=None, modified_key: Optional[str] = None):
+    # retrieves or uploads a json file from the datalake
+    path = datalake_path / clean_path(path)
+    if content is None:
+        return json.loads(path.read_text())
+    elif modified_key and modified_key in content and path.exists():
+        # Contrast the actual blob content for its modified time
+        source_mtime, dest_mtime = isoparse(content[modified_key]), isoparse(json.load(path.open())[modified_key])
+        if source_mtime >= dest_mtime:
+            return content
+    logger.debug(f"Uploading {path}.")
+    path.write_text(json.dumps(content, sort_keys=True, indent=2))
+    return content
+
+
+@api_2.get("/loadkql", response_class=PlainTextResponse)
+def load_KQL(query: str) -> str:
+    """
+    If query starts with kql/ then load it from a package resource and return text
+    If query starts with kql:// then load it from {KQL_BASEURL} and return text
+    """
     if query.startswith("kql/"):
         path = Path(__package__) / Path(clean_path(query))
         query = importlib.resources.read_text(package=str(path.parent).replace("/", "."), resource=path.name).strip()
@@ -165,7 +199,7 @@ def loadkql(query: str):
 
 def analytics_query(workspaces: list, query: str, timespan: str = "P7D", groupQueries=True):
     "Queries a list of workspaces using kusto"
-    query = loadkql(query)
+    query = load_KQL(query)
     cmd_base = ["monitor", "log-analytics", "query", "--analytics-query", query, "--timespan", timespan]
     if groupQueries or len(workspaces) == 1:
         cmd = cmd_base + ["--workspace", workspaces[0]]
@@ -192,7 +226,7 @@ def analytics_query(workspaces: list, query: str, timespan: str = "P7D", groupQu
 @api_2.get("/listWorkspaces")
 @cache.memoize(ttl=60 * 60 * 3)  # 3 hr cache
 def list_workspaces(format: OutputFormat = OutputFormat.list):
-    "Get sentinel workspaces as a dataframe"
+    "Get sentinel workspaces from {datalake}/notebooks/lists/SentinelWorkspaces.csv"
     # return workspaces dataframe from the datalake
     df = pandas.read_csv((datalake_path / "notebooks/lists/SentinelWorkspaces.csv").open()).join(
         pandas.read_csv((datalake_path / "notebooks/lists/SecOps Groups.csv").open()).set_index("Alias"), on="SecOps Group"
@@ -207,14 +241,6 @@ def list_workspaces(format: OutputFormat = OutputFormat.list):
         return df
 
 
-@api_1.get("/simpleQuery")
-def simple_query(query: str, name: str, timespan: str = "P7D"):
-    "Find first workspace matching name, then run a kusto query against it"
-    for workspace in list_workspaces(format=OutputFormat.json):
-        if str(workspace).find(name):
-            return analytics_query([workspace.customerId], query, timespan)
-
-
 def upload_results(results, blobdest, filenamekeys):
     "Uploads a list of json results as individual files split by timegenerated to a blob destination"
     blobdest = clean_path(blobdest)
@@ -226,95 +252,14 @@ def upload_results(results, blobdest, filenamekeys):
     logger.debug(f"Uploaded {len(results)} results.")
 
 
-@api_1.get("/globalQuery")
-def global_query(
-    query: str,
-    tasks: BackgroundTasks,
-    timespan: str = "P7D",
-    count: bool = False,
-    groupQueries: bool = True,
-    blobdest: str = "",
-    loganalyticsdest: str = "",
-    filenamekeys: str = "",
-):
-    """
-    Query all workspaces with SecurityIncident tables using kusto.
-    If blobdest is provided as a path the first 2 segments are assumed to be the location to save results to <account>/<container>/.../<filename>
-    If loganalyticsdest is provided it defines a custom log table to upload results to using the LA_CUSTOMERID and LA_SHAREDKEY env vars
-    Results are saved as individual .json files, and overwritten if they already exist.
-    Filenamekeys are a comma separated list of keys to build filename from
-    """
-    results = analytics_query(list_workspaces(), query, timespan, groupQueries=groupQueries)
-    if blobdest != "":
-        tasks.add_task(upload_results, results, blobdest, filenamekeys)
-    if loganalyticsdest != "":
-        tasks.add_task(upload_loganalytics, results, loganalyticsdest)
-    if count:
-        return len(results)
-    else:
-        return results
-
-
-@api_1.get("/globalStats")
-def global_stats(
-    query: str,
-    timespan: str = "P7D",
-    count: bool = False,
-    blobdest: str = "",
-):
-    """
-    Query all workspaces with SecurityIncident tables using kusto.
-    If blobdest is provided as a path the date will replace the querydate param <account>/<container>/{querydate}/<filename>
-    Results are saved as a single json file intended for e.g. powerbi
-    """
-    results = analytics_query(list_workspaces(), query, timespan)
-    if blobdest != "":
-        blobdest = blobdest.format(querydate=datetime.now().date().isoformat())
-        logger.info(f"Uploading to {blobdest}")
-        datalake_json(blobdest, results)
-    if count:
-        return len(results)
-    else:
-        return results
-
-
-email_template = Template(importlib.resources.read_text(f"{__package__}.templates", "email-template.html"))
-datalake_path = BlobPath(datalake_blob_prefix, datalake_subscription)
-
-
-@api_2.get("/datalake/{path:path}")
-def datalake(path):
-    path = datalake_path / clean_path(path)
-    if not path.exists():
-        logger.warning(path)
-        raise HTTPException(404, f"{path} not found")
-    return Response(content=path.read_bytes(), media_type=guess_type(path.name)[0])
-
-
-def datalake_json(path: str, content=None, modified_key: Optional[str] = None):
-    # retrieves or uploads a json file from the datalake
-    path = datalake_path / clean_path(path)
-    if content is None:
-        return json.loads(path.read_text())
-    elif modified_key and modified_key in content and path.exists():
-        # Contrast the actual blob content for its modified time
-        source_mtime, dest_mtime = isoparse(content[modified_key]), isoparse(json.loads(path.read_text())[modified_key])
-        if source_mtime >= dest_mtime:
-            return content
-    logger.debug(f"Uploading {path}.")
-    path.write_text(json.dumps(content, sort_keys=True, indent=2))
-    return content
-
-
-@api_1.get("/sentinelBeautify")
+@api_2.get("/sentinelBeautify")
 def sentinel_beautify(blob_path: str):
     """
     Takes a SecurityIncident from sentinel, and retreives related alerts and returns markdown, html and detailed json representation.
     """
-    valid_prefix = "/datalake/sentinel_outputs/incidents"
+    valid_prefix = "sentinel_outputs/incidents"
     if not blob_path.startswith(valid_prefix):
         return f"Blob path must start with {valid_prefix}"
-    blob_path = blob_path.replace("/datalake/", "", 1)  # strip leading /datalake/
     data = datalake_json(blob_path)
     labels = [f"SIEM_Severity:{data['Severity']}", f"SIEM_Status:{data['Status']}", f"SIEM_Title:{data['Title']}"]
     labels += [l["labelName"] for l in json.loads(data["Labels"])]  # copy over labels from incident
@@ -487,9 +432,13 @@ SecurityIncident
 )
 
 
+@api_2.get("/query")
 @api_2.post("/query")
-def queryAll(tasks: BackgroundTasks, query: str = ExampleQuery, groupQueries: bool = True, timespan: str = "P7D", format: OutputFormat = OutputFormat.json):
-    results = global_query(query, tasks, groupQueries=groupQueries, timespan=timespan)
+def query_all(query: str = ExampleQuery, groupQueries: bool = True, timespan: str = "P7D", format: OutputFormat = OutputFormat.json):
+    """
+    Query all workspaces from `/listWorkspaces` using kusto.
+    """
+    results = analytics_query(list_workspaces(), query, timespan, groupQueries=groupQueries)
     if format == OutputFormat.json:
         return results
     elif format in [OutputFormat.csv, OutputFormat.list]:
@@ -499,21 +448,40 @@ def queryAll(tasks: BackgroundTasks, query: str = ExampleQuery, groupQueries: bo
 @api_2.post("/collect")
 def collect(table: str, tasks: BackgroundTasks, query: str = ExampleQuery, timespan: str = "P7D"):
     """
-    Collects query results into a central table.
-    Note that due to ingestion lag past 7 day deduplication may fail for the first few runs
-    if run at intervals of less than 15 minutes.
+    Query all workspaces from `/listWorkspaces` using kusto.
+    Collects query results into a central {table}.
+    Note that due to ingestion lag past 7 day deduplication may fail for the first few runs if run at intervals of less than 15 minutes.
     """
-    return global_query(query, tasks, loganalyticsdest=table, timespan=timespan, count=True)
+    results = analytics_query(list_workspaces(), query, timespan)
+    tasks.add_task(upload_loganalytics, results, table)
+    return len(results)
 
 
 @api_2.post("/summarise")
 def summarise(blobpath: str, query: str = ExampleQuery, timespan: str = "P7D"):
-    return global_stats(query, blobdest=blobpath, timespan=timespan, count=True)
+    """
+    Query all workspaces in {datalake}/notebooks/lists/SentinelWorkspaces.csv using kusto.
+    Save results to {datalake_path}/{querydate}/{filename}.json
+    Results are saved as a single json file intended for e.g. powerbi
+    """
+    results = analytics_query(list_workspaces(), query, timespan)
+    blobpath = blobpath.format(querydate=datetime.now().date().isoformat())
+    logger.info(f"Uploading to {blobpath}")
+    datalake_json(blobpath, results)
+    return len(results)
 
 
 @api_2.post("/export")
 def export(blobpath: str, filenamekeys: str, tasks: BackgroundTasks, query: str = ExampleQuery, timespan: str = "P7D"):
-    return global_query(query, tasks, blobdest=blobpath, timespan=timespan, filenamekeys=filenamekeys, count=True)
+    """
+    Query all workspaces in {datalake_path}/notebooks/lists/SentinelWorkspaces.csv using kusto.
+    Save results to {datalake_path}/{blobpath}/{date}/{filename}.json
+    Results are saved as individual .json files, and overwritten if they already exist.
+    Filenamekeys are a comma separated list of keys to build filename from
+    """
+    results = analytics_query(list_workspaces(), query, timespan)
+    tasks.add_task(upload_results, results, blobpath, filenamekeys)
+    return len(results)
 
 
 @cache.memoize(ttl=60 * 60)
@@ -524,13 +492,32 @@ def data_collector(connstring=os.environ["AZMONITOR_DATA_COLLECTOR"]):
     primarySharedKey = azcli(["monitor", "log-analytics", "workspace", "get-shared-keys"] + az_workspace)["primarySharedKey"]
     return customerId, primarySharedKey
 
+def upload_loganalytics_raw(rows, customerId, primarySharedKey, log_type):
+    # Build and send a request to the Log Analytics POST API
+    body = json.dumps(rows)  # dump new rows ready for upload
+    method, content_type, resource = "POST", "application/json", "/api/logs"
+    rfc1123date = datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT")
+    content_length = len(body)
 
-# Build and send a request to the Log Analytics POST API
-def upload_loganalytics(rows: list, log_type: str):
+    logger.info(f"Uploading {content_length} bytes to {log_type}_CL")
+
+    signature = build_la_signature(customerId, primarySharedKey, rfc1123date, content_length, method, content_type, resource)
+    uri = "https://" + customerId + ".ods.opinsights.azure.com" + resource + "?api-version=2016-04-01"
+    headers = {"content-type": content_type, "Authorization": signature, "Log-Type": log_type, "x-ms-date": rfc1123date}
+
+    response = requests.post(uri, data=body, headers=headers)
+    if response.status_code >= 300:
+        raise HTTPException(response.status_code, response.text)
+
+@api_2.post("/ingest")
+def upload_loganalytics(rows: list[dict], log_type: str):
+    """
+    Uploads a set of records to the {data_collector} workspace into table {log_type}_CL.
+    Deduplicates against similar data for the past 7 days using a sha256 hash of the row
+    """
     customerId, primarySharedKey = data_collector()
-    table_name = f"{log_type}_CL"
     try:
-        existing_data = analytics_query([customerId], table_name, "P7D")  # Scan past 7 days for duplicates
+        existing_data = analytics_query([customerId], f"{log_type}_CL", "P7D")  # Scan past 7 days for duplicates
     except Exception as e:
         logger.warning(e)
         existing_data = []
@@ -555,18 +542,8 @@ def upload_loganalytics(rows: list, log_type: str):
     rowsize = len(json.dumps(rows[0]).encode("utf8"))
     chunkSize = int(20 * 1024 * 1024 / rowsize)  # 20MB max size
     chunks = [rows[x : x + chunkSize] for x in range(0, len(rows), chunkSize)]
-    for rows in chunks:
-        body = json.dumps(rows)  # dump new rows ready for upload
-        method, content_type, resource = "POST", "application/json", "/api/logs"
-        rfc1123date = datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT")
-        content_length = len(body)
+    with ThreadPoolExecutor(max_workers=max_threads) as executor:
+        for rows in chunks:
+            executor.submit(upload_loganalytics_raw, rows, customerId, primarySharedKey, log_type)
+    logger.info(f"Uploaded {len(rows)} records to {log_type}_CL.")
 
-        logger.info(f"Uploading {content_length} bytes to {table_name}")
-
-        signature = build_la_signature(customerId, primarySharedKey, rfc1123date, content_length, method, content_type, resource)
-        uri = "https://" + customerId + ".ods.opinsights.azure.com" + resource + "?api-version=2016-04-01"
-        headers = {"content-type": content_type, "Authorization": signature, "Log-Type": log_type, "x-ms-date": rfc1123date}
-
-        response = requests.post(uri, data=body, headers=headers)
-        if response.status_code >= 300:
-            raise HTTPException(response.status_code, response.text)
