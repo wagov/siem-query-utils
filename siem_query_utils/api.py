@@ -239,12 +239,14 @@ def analytics_query(workspaces: list, query: str, timespan: str = "P7D", groupQu
 
 @api_2.get("/listWorkspaces")
 @cache.memoize(ttl=60 * 60 * 3)  # 3 hr cache
-def list_workspaces(format: OutputFormat = OutputFormat.list):
+def list_workspaces(format: OutputFormat = OutputFormat.list, TenantId: str = None):
     "Get sentinel workspaces from {datalake}/notebooks/lists/SentinelWorkspaces.csv"
     # return workspaces dataframe from the datalake
     df = pandas.read_csv((config("datalake_path") / "notebooks/lists/SentinelWorkspaces.csv").open()).join(
-        pandas.read_csv((config("datalake_path") / "notebooks/lists/SecOps Groups.csv").open()).set_index("Alias"), on="SecOps Group"
+        pandas.read_csv((config("datalake_path") / "notebooks/lists/SecOps Groups.csv").open()).set_index("Alias"), on="SecOps Group", rsuffix="_secops"
     )
+    if TenantId:
+        df = df[df["customerId"] == TenantId]
     if format == OutputFormat.list:
         return list(df.customerId.dropna())
     elif format == OutputFormat.json:
@@ -267,17 +269,17 @@ def upload_results(results, blobdest, filenamekeys):
 
 
 def atlaskit_client():
-    return httpx.Client(base_url = "http://127.0.0.1:3000")
+    return httpx.Client(base_url="http://127.0.0.1:3000")
 
 
 class atlaskitfmt(str, Enum):
     markdown = "md"
     json = "adf"
     wikimarkup = "wiki"
-    
+
 
 @api_2.post("/atlaskit/{input}/to/{output}")
-def atlaskit(request: Request, input: atlaskitfmt, output: atlaskitfmt, body = Body("# Test Header", media_type="text/plain")):
+def atlaskit(request: Request, input: atlaskitfmt, output: atlaskitfmt, body=Body("# Test Header", media_type="text/plain")):
     """
     Converts between atlaskit formats using js modules.
     """
