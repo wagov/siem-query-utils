@@ -33,7 +33,7 @@ You can also build and test the container locally using docker.
 ```bash
 docker build -t squ .; docker run --env-file .env -p 8000:8000 --entrypoint /bin/bash -it squ
 # inside docker container (--tenant is optional, but useful if e.g. one tenant has specific auth constraints).
-az login --tenant $TENANT_ID
+poetry run az login --tenant $TENANT_ID
 # follow auth prompts
 poetry run siem_query_utils serve
 `````
