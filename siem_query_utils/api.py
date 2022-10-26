@@ -449,8 +449,8 @@ def sentinel_beautify(blob_path: str, outputformat: str = "jira", default_status
             customer = {}
         # Grab wiki format for jira and truncate to 32767 chars
         response.update({
-            "secops_status": customer.get("SecOps Status", default_status),
-            "jira_orgid": customer.get("JiraOrgId", default_orgid),
+            "secops_status": customer.get("SecOps Status") or default_status,
+            "jira_orgid": customer.get("JiraOrgId") or default_orgid,
             "customer": customer,
             "wikimarkup": atlaskit_client().post(f"/md/to/wiki", content=mdtext, headers={"content-type": "text/plain"}).content[:32760]
         })
