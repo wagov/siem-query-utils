@@ -6,7 +6,7 @@ from IPython import display
 from cloudpathlib import AnyPath
 from concurrent.futures import ThreadPoolExecutor, wait, Future
 from pathvalidate import sanitize_filepath
-from .api import analytics_query, datalake_path, list_workspaces, logger
+from .api import analytics_query, config, list_workspaces, logger
 
 
 class KQL:
@@ -79,7 +79,7 @@ class KQL:
 
     sns = seaborn
 
-    def __init__(self, path: Union[Path, AnyPath] = datalake_path, template: str = "", subfolder: str = "notebooks", timespan: str = "P30D"):
+    def __init__(self, path: Union[Path, AnyPath] = None, template: str = "", subfolder: str = "notebooks", timespan: str = "P30D"):
         """
         Convenience tooling for loading pandas dataframes using context from a path.
         path is expected to be pathlib type object with a structure like below:
@@ -95,6 +95,8 @@ class KQL:
            `--reports
               `--*/*/*.pdf
         """
+        if not path:
+            path = config("datalake_path")
         self.pdf_css_file = False
         self.timespan, self.path, self.nbpath = timespan, path, path / sanitize_filepath(subfolder)
         self.kql, self.lists, self.reports = self.nbpath / "kql", self.nbpath / "lists", self.nbpath / "reports"

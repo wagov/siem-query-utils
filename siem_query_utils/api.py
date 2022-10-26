@@ -5,6 +5,7 @@ import importlib
 import json
 import logging
 import os
+import httpx
 from collections import namedtuple
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
@@ -21,7 +22,7 @@ from azure.storage.blob import BlobServiceClient
 from cacheout import Cache
 from cloudpathlib import AzureBlobClient
 from dateutil.parser import isoparse
-from fastapi import BackgroundTasks, Body, FastAPI, HTTPException
+from fastapi import BackgroundTasks, Body, FastAPI, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse, PlainTextResponse
 from flatten_json import flatten
 from markdown import markdown
@@ -38,17 +39,6 @@ def clean_path(path: str):
     return sanitize_filepath(path.replace("..", ""))
 
 
-try:
-    datalake_blob_prefix = os.environ["DATALAKE_BLOB_PREFIX"]  # e.g. "https://{datalake_account}.blob.core.windows.net/{datalake_container}"
-    datalake_subscription = os.environ["DATALAKE_SUBSCRIPTION"]
-    datalake_account, datalake_container = datalake_blob_prefix.split("/")[2:]
-    datalake_account = datalake_account.split(".")[0]
-except:
-    raise Exception("Please set DATALAKE_BLOB_PREFIX and DATALAKE_SUBSCRIPTION env vars")
-
-email_footer = os.environ.get("FOOTER_HTML", "Set FOOTER_HTML env var to configure this...")
-max_threads = int(os.environ.get("MAX_THREADS", "20"))
-
 app_state = {"logged_in": False, "login_time": datetime.utcnow() - timedelta(days=1)}  # last login 1 day ago to force relogin
 
 api_2 = FastAPI(title="SIEM Query Utils API v2", version=importlib.metadata.version(__package__))
@@ -59,6 +49,27 @@ class OutputFormat(str, Enum):
     csv = "csv"
     list = "list"
     df = "df"
+
+
+def bootstrap(app_state):
+    try:
+        prefix, subscription = os.environ["DATALAKE_BLOB_PREFIX"], os.environ["DATALAKE_SUBSCRIPTION"]
+    except:
+        raise Exception("Please set DATALAKE_BLOB_PREFIX and DATALAKE_SUBSCRIPTION env vars")
+    account, container = prefix.split("/")[2:]
+    app_state.update(
+        {
+            "datalake_blob_prefix": prefix,  # e.g. "https://{datalake_account}.blob.core.windows.net/{datalake_container}"
+            "datalake_subscription": subscription,
+            "datalake_account": account,
+            "datalake_container": container,
+            "email_template": Template(importlib.resources.read_text(f"{__package__}.templates", "email-template.html")),
+            "datalake_path": BlobPath(prefix, subscription),
+            "email_footer": os.environ.get("FOOTER_HTML", "Set FOOTER_HTML env var to configure this..."),
+            "max_threads": int(os.environ.get("MAX_THREADS", "20")),
+            "data_collector_connstring": os.environ.get("AZMONITOR_DATA_COLLECTOR"),  # kinda optional
+        }
+    )
 
 
 def login(refresh: bool = False):
@@ -84,15 +95,22 @@ def login(refresh: bool = False):
             # bail as we aren't able to login
             logger.error(e)
             exit()
+    # setup all other env vars
+    bootstrap(app_state)
+
+
+def config(key):
+    if datetime.utcnow() - app_state["login_time"] > timedelta(hours=1):
+        login(refresh=True)
+    elif not app_state["logged_in"]:
+        login()
+    return app_state[key]
 
 
 @cache.memoize(ttl=60)
 def azcli(cmd: list, error_result: Any = None):
     "Run a general azure cli cmd, if as_df True return as dataframe"
-    if datetime.utcnow() - app_state["login_time"] > timedelta(hours=1):
-        login(refresh=True)
-    elif not app_state["logged_in"]:
-        login()
+    assert config("logged_in")
     cmd += ["--only-show-errors", "-o", "json"]
     cli = get_default_cli()
     logger.debug(" ".join(cmd))
@@ -107,7 +125,7 @@ def azcli(cmd: list, error_result: Any = None):
 
 
 @cache.memoize(ttl=60 * 60 * 24)  # cache sas tokens 1 day
-def generatesas(account=datalake_account, container=datalake_container, subscription=datalake_subscription, permissions="racwdlt", expiry_days=3):
+def generatesas(account: str = None, container: str = None, subscription: str = None, permissions="racwdlt", expiry_days=3):
     expiry = str(datetime.today().date() + timedelta(days=expiry_days))
     result = azcli(
         [
@@ -118,11 +136,11 @@ def generatesas(account=datalake_account, container=datalake_container, subscrip
             "login",
             "--as-user",
             "--account-name",
-            account,
+            account or config("datalake_account"),
             "-n",
-            container,
+            container or config("datalake_container"),
             "--subscription",
-            subscription,
+            subscription or config("datalake_subscription"),
             "--permissions",
             permissions,
             "--expiry",
@@ -147,16 +165,12 @@ def BlobPath(url: str, subscription: str = ""):
     return blobclient.CloudPath(f"az://{container}")
 
 
-email_template = Template(importlib.resources.read_text(f"{__package__}.templates", "email-template.html"))
-datalake_path = BlobPath(datalake_blob_prefix, datalake_subscription)
-
-
 @api_2.get("/datalake/{path:path}")
 def datalake(path: str):
     """
     Downloads a file from the datalake, e.g. `notebooks/lists/SentinelWorkspaces.csv`
     """
-    path = datalake_path / clean_path(path)
+    path = config("datalake_path") / clean_path(path)
     if not path.exists():
         logger.warning(path)
         raise HTTPException(404, f"{path} not found")
@@ -165,7 +179,7 @@ def datalake(path: str):
 
 def datalake_json(path: str, content=None, modified_key: Optional[str] = None):
     # retrieves or uploads a json file from the datalake
-    path = datalake_path / clean_path(path)
+    path = config("datalake_path") / clean_path(path)
     if content is None:
         return json.loads(path.read_text())
     elif modified_key and modified_key in content and path.exists():
@@ -181,8 +195,8 @@ def datalake_json(path: str, content=None, modified_key: Optional[str] = None):
 @api_2.get("/loadkql", response_class=PlainTextResponse)
 def load_KQL(query: str) -> str:
     """
-    If query starts with kql/ then load it from a package resource and return text
-    If query starts with kql:// then load it from {KQL_BASEURL} and return text
+    - If query starts with kql/ then load it from a package resource and return text
+    - If query starts with kql:// then load it from {KQL_BASEURL} and return text
     """
     if query.startswith("kql/"):
         path = Path(__package__) / Path(clean_path(query))
@@ -213,7 +227,7 @@ def analytics_query(workspaces: list, query: str, timespan: str = "P7D", groupQu
             pass
     # run each query separately and stitch results, 20 at a time.
     results = []
-    with ThreadPoolExecutor(max_workers=max_threads) as executor:
+    with ThreadPoolExecutor(max_workers=config("max_threads")) as executor:
         futures = {ws: executor.submit(azcli, cmd_base + ["--workspace", ws], error_result=[]) for ws in workspaces}
         for ws, future in futures.items():
             result = future.result()
@@ -228,8 +242,8 @@ def analytics_query(workspaces: list, query: str, timespan: str = "P7D", groupQu
 def list_workspaces(format: OutputFormat = OutputFormat.list):
     "Get sentinel workspaces from {datalake}/notebooks/lists/SentinelWorkspaces.csv"
     # return workspaces dataframe from the datalake
-    df = pandas.read_csv((datalake_path / "notebooks/lists/SentinelWorkspaces.csv").open()).join(
-        pandas.read_csv((datalake_path / "notebooks/lists/SecOps Groups.csv").open()).set_index("Alias"), on="SecOps Group"
+    df = pandas.read_csv((config("datalake_path") / "notebooks/lists/SentinelWorkspaces.csv").open()).join(
+        pandas.read_csv((config("datalake_path") / "notebooks/lists/SecOps Groups.csv").open()).set_index("Alias"), on="SecOps Group"
     )
     if format == OutputFormat.list:
         return list(df.customerId.dropna())
@@ -244,7 +258,7 @@ def list_workspaces(format: OutputFormat = OutputFormat.list):
 def upload_results(results, blobdest, filenamekeys):
     "Uploads a list of json results as individual files split by timegenerated to a blob destination"
     blobdest = clean_path(blobdest)
-    with ThreadPoolExecutor(max_workers=max_threads) as executor:
+    with ThreadPoolExecutor(max_workers=config("max_threads")) as executor:
         for result in results:
             dirname = f"{result['TimeGenerated'].split('T')[0]}"
             filename = "_".join([result[key] for key in filenamekeys.split(",")]) + ".json"
@@ -252,8 +266,27 @@ def upload_results(results, blobdest, filenamekeys):
     logger.debug(f"Uploaded {len(results)} results.")
 
 
+def atlaskit_client():
+    return httpx.Client(base_url = "http://127.0.0.1:3000")
+
+
+class atlaskitfmt(str, Enum):
+    markdown = "md"
+    json = "adf"
+    wikimarkup = "wiki"
+    
+
+@api_2.post("/atlaskit/{input}/to/{output}")
+def atlaskit(request: Request, input: atlaskitfmt, output: atlaskitfmt, body = Body("# Test Header", media_type="text/plain")):
+    """
+    Converts between atlaskit formats using js modules.
+    """
+    origin = atlaskit_client().post(f"/{input}/to/{output}", content=body, headers={"content-type": request.headers["content-type"]})
+    return Response(status_code=origin.status_code, content=origin.content)
+
+
 @api_2.get("/sentinelBeautify")
-def sentinel_beautify(blob_path: str):
+def sentinel_beautify(blob_path: str, outputformat: str = "jira"):
     """
     Takes a SecurityIncident from sentinel, and retreives related alerts and returns markdown, html and detailed json representation.
     """
@@ -330,7 +363,7 @@ def sentinel_beautify(blob_path: str):
         def __missing__(self, key):
             return key
 
-    if data.get("AlertIds") and datalake_blob_prefix:
+    if data.get("AlertIds") and config("datalake_blob_prefix"):
         data["AlertIds"] = json.loads(data["AlertIds"])
         alertdata = []
         for alertid in reversed(data["AlertIds"]):  # walk alerts from newest to oldest, max 10
@@ -397,18 +430,21 @@ def sentinel_beautify(blob_path: str):
     )
     mdtext = "\n".join([str(line) for line in mdtext])
     content = markdown(mdtext, extensions=["tables"])
-    html = email_template.substitute(title=title, content=content, footer=email_footer)
+    html = config("email_template").substitute(title=title, content=content, footer=config("email_footer"))
     # remove special chars and deduplicate labels
     labels = set("".join(c for c in label if c.isalnum() or c in ".:_") for label in labels)
 
     response = {
         "subject": title,
-        "html": html,
-        "markdown": mdtext,
         "labels": list(labels),
         "observables": [dict(ts) for ts in set(tuple(i.items()) for i in observables)],
         "sentinel_data": data,
     }
+    if outputformat == "jira":
+        # Grab wiki format for jira and truncate to 32767 chars
+        response.update({"wikimarkup": atlaskit_client().post(f"/md/to/wiki", content=mdtext, headers={"content-type": "text/plain"}).content[:32760]})
+    else:
+        response.update({"html": html, "markdown": mdtext})
     return response
 
 
@@ -446,23 +482,24 @@ def query_all(query: str = ExampleQuery, groupQueries: bool = True, timespan: st
 
 
 @api_2.post("/collect")
-def collect(table: str, tasks: BackgroundTasks, query: str = ExampleQuery, timespan: str = "P7D"):
+def collect(table: str, tasks: BackgroundTasks, query: str = ExampleQuery, timespan: str = "P7D", target_workspace: str = None):
     """
-    Query all workspaces from `/listWorkspaces` using kusto.
-    Collects query results into a central {table}.
-    Note that due to ingestion lag past 7 day deduplication may fail for the first few runs if run at intervals of less than 15 minutes.
+    - Query all workspaces from `/listWorkspaces` using kusto.
+    - Collects query results into a central {table}.
+    - Note that due to ingestion lag past 7 day deduplication may fail for the first few runs if run at intervals of less than 15 minutes.
+    - `target_workspace` is optional (will use env if not set), should be configured as {resourcegroup}/{workspacename} (subscription will be inferred from DATALAKE_SUBSCRIPTION)
     """
     results = analytics_query(list_workspaces(), query, timespan)
-    tasks.add_task(upload_loganalytics, results, table)
+    tasks.add_task(upload_loganalytics, results, table, target_workspace)
     return len(results)
 
 
 @api_2.post("/summarise")
 def summarise(blobpath: str, query: str = ExampleQuery, timespan: str = "P7D"):
     """
-    Query all workspaces in {datalake}/notebooks/lists/SentinelWorkspaces.csv using kusto.
-    Save results to {datalake_path}/{querydate}/{filename}.json
-    Results are saved as a single json file intended for e.g. powerbi
+    - Query all workspaces in {datalake}/notebooks/lists/SentinelWorkspaces.csv using kusto.
+    - Save results to {config("datalake_path")}/{querydate}/{filename}.json
+    - Results are saved as a single json file intended for e.g. powerbi
     """
     results = analytics_query(list_workspaces(), query, timespan)
     blobpath = blobpath.format(querydate=datetime.now().date().isoformat())
@@ -474,10 +511,10 @@ def summarise(blobpath: str, query: str = ExampleQuery, timespan: str = "P7D"):
 @api_2.post("/export")
 def export(blobpath: str, filenamekeys: str, tasks: BackgroundTasks, query: str = ExampleQuery, timespan: str = "P7D"):
     """
-    Query all workspaces in {datalake_path}/notebooks/lists/SentinelWorkspaces.csv using kusto.
-    Save results to {datalake_path}/{blobpath}/{date}/{filename}.json
-    Results are saved as individual .json files, and overwritten if they already exist.
-    Filenamekeys are a comma separated list of keys to build filename from
+    - Query all workspaces in {config("datalake_path")}/notebooks/lists/SentinelWorkspaces.csv using kusto.
+    - Save results to {config("datalake_path")}/{blobpath}/{date}/{filename}.json
+    - Results are saved as individual .json files, and overwritten if they already exist.
+    - Filenamekeys are a comma separated list of keys to build filename from
     """
     results = analytics_query(list_workspaces(), query, timespan)
     tasks.add_task(upload_results, results, blobpath, filenamekeys)
@@ -485,12 +522,17 @@ def export(blobpath: str, filenamekeys: str, tasks: BackgroundTasks, query: str 
 
 
 @cache.memoize(ttl=60 * 60)
-def data_collector(connstring=os.environ["AZMONITOR_DATA_COLLECTOR"]):
-    subscription, resourcegroup, workspacename = connstring.split("/")
+def data_collector(target_workspace: str = None):
+    if not target_workspace:
+        target_workspace = config("data_collector_connstring")
+    else:
+        target_workspace = config("datalake_subscription") + "/" + target_workspace
+    subscription, resourcegroup, workspacename = target_workspace.split("/")
     az_workspace = ["--subscription", subscription, "--resource-group", resourcegroup, "--name", workspacename]
     customerId = azcli(["monitor", "log-analytics", "workspace", "show"] + az_workspace)["customerId"]
     primarySharedKey = azcli(["monitor", "log-analytics", "workspace", "get-shared-keys"] + az_workspace)["primarySharedKey"]
     return customerId, primarySharedKey
+
 
 def upload_loganalytics_raw(rows, customerId, primarySharedKey, log_type):
     # Build and send a request to the Log Analytics POST API
@@ -509,13 +551,15 @@ def upload_loganalytics_raw(rows, customerId, primarySharedKey, log_type):
     if response.status_code >= 300:
         raise HTTPException(response.status_code, response.text)
 
+
 @api_2.post("/ingest")
-def upload_loganalytics(rows: list[dict], log_type: str):
+def upload_loganalytics(rows: list[dict], log_type: str, target_workspace: str = None):
     """
-    Uploads a set of records to the {data_collector} workspace into table {log_type}_CL.
-    Deduplicates against similar data for the past 7 days using a sha256 hash of the row
+    - Uploads a set of records to the {data_collector} workspace into table {log_type}_CL.
+    - Deduplicates against similar data for the past 7 days using a sha256 hash of the row.
+    - `target_workspace` is optional (will use env if not set), should be configured as {resourcegroup}/{workspacename} (subscription will be inferred from DATALAKE_SUBSCRIPTION)
     """
-    customerId, primarySharedKey = data_collector()
+    customerId, primarySharedKey = data_collector(target_workspace)
     try:
         existing_data = analytics_query([customerId], f"{log_type}_CL", "P7D")  # Scan past 7 days for duplicates
     except Exception as e:
@@ -542,8 +586,7 @@ def upload_loganalytics(rows: list[dict], log_type: str):
     rowsize = len(json.dumps(rows[0]).encode("utf8"))
     chunkSize = int(20 * 1024 * 1024 / rowsize)  # 20MB max size
     chunks = [rows[x : x + chunkSize] for x in range(0, len(rows), chunkSize)]
-    with ThreadPoolExecutor(max_workers=max_threads) as executor:
+    with ThreadPoolExecutor(max_workers=config("max_threads")) as executor:
         for rows in chunks:
             executor.submit(upload_loganalytics_raw, rows, customerId, primarySharedKey, log_type)
     logger.info(f"Uploaded {len(rows)} records to {log_type}_CL.")
-

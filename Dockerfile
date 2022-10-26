@@ -13,6 +13,6 @@ RUN ln -s $POETRY_HOME/bin/poetry /usr/local/bin/poetry
 COPY . ./
 RUN poetry install
 RUN poetry run az extension add -n log-analytics -y
-RUN cd atlaskit-transformer && npm ci && npm cache clean --force
+RUN cd atlaskit-transformer && npm install
 
 ENTRYPOINT [ "poetry", "run", "siem_query_utils", "serve" ]

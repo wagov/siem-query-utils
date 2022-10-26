@@ -23,14 +23,16 @@ app.mount("/proxy", proxy_1)
 def index():
     return RedirectResponse("/proxy/main_path")
 
-def atlaskit_serve():
-    Popen("node atlaskit-transformer/main.mjs", shell=True, close_fds=True)
 
 def serve():
+    # launch background node helper on port 3000
+    atlaskit = Popen("node atlaskit-transformer/main.mjs", shell=True, close_fds=True)
     # serve on port 8000, assume running behind a trusted reverse proxy
-    atlaskit_serve() # launch background node helper on port 3000
     host, port = "0.0.0.0", 8000
+    # Launch main uvicor server
     uvicorn.run(app, port=port, host=host, log_level=os.environ.get("LOG_LEVEL", "WARNING").lower(), proxy_headers=True)
+    # Clean up node helper
+    atlaskit.kill()
 
 
 def cli():
