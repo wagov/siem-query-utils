@@ -442,7 +442,7 @@ def sentinel_beautify(blob_path: str, outputformat: str = "jira", default_status
     }
     if outputformat == "jira":
         df = list_workspaces(OutputFormat.df)
-        customer = df[df["customerId"] == data["TenantId"]].to_dict("records")
+        customer = df[df["customerId"] == data["TenantId"]].fillna('').to_dict("records")
         if len(customer) > 0:
             customer = customer[0]
         else:
