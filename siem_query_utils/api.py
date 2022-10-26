@@ -239,14 +239,12 @@ def analytics_query(workspaces: list, query: str, timespan: str = "P7D", groupQu
 
 @api_2.get("/listWorkspaces")
 @cache.memoize(ttl=60 * 60 * 3)  # 3 hr cache
-def list_workspaces(format: OutputFormat = OutputFormat.list, TenantId: str = None):
+def list_workspaces(format: OutputFormat = OutputFormat.list):
     "Get sentinel workspaces from {datalake}/notebooks/lists/SentinelWorkspaces.csv"
     # return workspaces dataframe from the datalake
     df = pandas.read_csv((config("datalake_path") / "notebooks/lists/SentinelWorkspaces.csv").open()).join(
         pandas.read_csv((config("datalake_path") / "notebooks/lists/SecOps Groups.csv").open()).set_index("Alias"), on="SecOps Group", rsuffix="_secops"
     )
-    if TenantId:
-        df = df[df["customerId"] == TenantId]
     if format == OutputFormat.list:
         return list(df.customerId.dropna())
     elif format == OutputFormat.json:
@@ -288,7 +286,7 @@ def atlaskit(request: Request, input: atlaskitfmt, output: atlaskitfmt, body=Bod
 
 
 @api_2.get("/sentinelBeautify")
-def sentinel_beautify(blob_path: str, outputformat: str = "jira"):
+def sentinel_beautify(blob_path: str, outputformat: str = "jira", default_status: str = "Onboard: MOU (T0)", default_orgid: int = 2):
     """
     Takes a SecurityIncident from sentinel, and retreives related alerts and returns markdown, html and detailed json representation.
     """
@@ -443,8 +441,18 @@ def sentinel_beautify(blob_path: str, outputformat: str = "jira"):
         "sentinel_data": data,
     }
     if outputformat == "jira":
+        df = list_workspaces(OutputFormat.df)
+        customer = df[df["customerId"] == data["TenantId"]].to_dict("records")
+        if len(customer) > 0:
+            customer = customer[0]
+        else:
+            customer = {}
         # Grab wiki format for jira and truncate to 32767 chars
-        response.update({"wikimarkup": atlaskit_client().post(f"/md/to/wiki", content=mdtext, headers={"content-type": "text/plain"}).content[:32760]})
+        response.update({
+            "secops_status": customer.get("SecOps Status", default_status),
+            "jira_orgid": customer.get("JiraOrgId", default_orgid),
+            "wikimarkup": atlaskit_client().post(f"/md/to/wiki", content=mdtext, headers={"content-type": "text/plain"}).content[:32760]
+        })
     else:
         response.update({"html": html, "markdown": mdtext})
     return response
