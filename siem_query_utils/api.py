@@ -36,7 +36,7 @@ cache = Cache(maxsize=25600, ttl=300)
 
 def clean_path(path: str):
     # remove any dir traversal and dangerous chars
-    return sanitize_filepath(path.replace("..", ""))
+    return sanitize_filepath(path.replace("..", ""), platform="auto")
 
 
 app_state = {"logged_in": False, "login_time": datetime.utcnow() - timedelta(days=1)}  # last login 1 day ago to force relogin
