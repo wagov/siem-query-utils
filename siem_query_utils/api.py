@@ -590,14 +590,14 @@ def upload_loganalytics(rows: list[dict], log_type: str, target_workspace: str =
         digest = hashlib.sha256(json.dumps(item, sort_keys=True).encode("utf8")).hexdigest()
         if digest not in existing_hashes:
             item[digest_column] = digest  # only add digest for new rows
-    rows = [item for item in rows if digest_column in item.keys()]
+    allrows = [item for item in rows if digest_column in item.keys()]
     if len(rows) == 0:
         logger.info("Nothing to upload")
         return
     rowsize = len(json.dumps(rows[0]).encode("utf8"))
     chunkSize = int(20 * 1024 * 1024 / rowsize)  # 20MB max size
-    chunks = [rows[x : x + chunkSize] for x in range(0, len(rows), chunkSize)]
+    chunks = [allrows[x : x + chunkSize] for x in range(0, len(allrows), chunkSize)]
     with ThreadPoolExecutor(max_workers=config("max_threads")) as executor:
         for rows in chunks:
             executor.submit(upload_loganalytics_raw, rows, customerId, primarySharedKey, log_type)
-    logger.info(f"Uploaded {len(rows)} records to {log_type}_CL.")
+    logger.info(f"Uploaded {len(allrows)} records to {log_type}_CL.")
