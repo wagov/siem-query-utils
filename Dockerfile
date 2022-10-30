@@ -10,13 +10,13 @@ USER appuser
 WORKDIR /home/appuser
 SHELL ["/bin/bash", "--login", "-c"]
 RUN curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.2/install.sh | bash
-RUN nvm install node
+RUN nvm install 19
 RUN curl -sSL https://install.python-poetry.org | python3 -
 ENV PATH "$PATH:/home/appuser/.local/bin"
 COPY --chown=appuser . ./app
 WORKDIR /home/appuser/app
 RUN poetry install 
 RUN poetry run az extension add -n log-analytics -y
-RUN cd atlaskit-transformer && npm install
+RUN cd atlaskit-transformer && npm clean-install
 
 ENTRYPOINT [ "poetry", "run", "siem_query_utils", "serve" ]
