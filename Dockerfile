@@ -14,6 +14,7 @@ RUN nvm install 19
 RUN curl -sSL https://install.python-poetry.org | python3 -
 ENV PATH "$PATH:/home/appuser/.local/bin"
 COPY --chown=appuser . ./app
+RUN mkdir .azure
 WORKDIR /home/appuser/app
 RUN poetry install 
 RUN poetry run az extension add -n log-analytics -y
