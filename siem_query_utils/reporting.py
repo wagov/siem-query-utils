@@ -1,11 +1,19 @@
-import pandas, seaborn, esparto, tinycss2, tempfile, hashlib, pickle
+import hashlib
+import pickle
+import tempfile
+from concurrent.futures import Future, ThreadPoolExecutor, wait
 from pathlib import Path
-from typing import Union
 from string import Template
-from IPython import display
+from typing import Union
+
+import esparto
+import pandas
+import seaborn
+import tinycss2
 from cloudpathlib import AnyPath
-from concurrent.futures import ThreadPoolExecutor, wait, Future
+from IPython import display
 from pathvalidate import sanitize_filepath
+
 from .api import analytics_query, config, list_workspaces, logger
 
 
@@ -97,7 +105,7 @@ class KQL:
         """
         if not path:
             path = config("datalake_path")
-        self.pdf_css_file = False
+        self.pdf_css_file = tempfile.NamedTemporaryFile(delete=False, mode="w+t", suffix=".css")
         self.timespan, self.path, self.nbpath = timespan, path, path / sanitize_filepath(subfolder)
         self.kql, self.lists, self.reports = self.nbpath / "kql", self.nbpath / "lists", self.nbpath / "reports"
         self.sentinelworkspaces = list_workspaces()
@@ -189,7 +197,6 @@ class KQL:
 
         base_css = [r for r in self.base_css if not hasattr(r, "at_keyword")]  # strip media/print styles so we can replace
 
-        self.pdf_css_file = tempfile.NamedTemporaryFile(delete=False, mode="w+t", suffix=".css")
         bg = self.css_params["background"]
         self.background_file = tempfile.NamedTemporaryFile(delete=False, mode="w+b", suffix=bg.suffix)
         self.background_file.write(bg.open("r+b").read())
@@ -232,7 +239,7 @@ class KQL:
             else:
                 dfs[name] = data[1]
         with tempfile.NamedTemporaryFile(mode="w+b", suffix=".xlsx") as excel_file_tmp:
-            with pandas.ExcelWriter(excel_file_tmp) as writer:
+            with pandas.ExcelWriter(excel_file_tmp) as writer: # pylint: disable=abstract-class-instantiated
                 for name, df in dfs.items():
                     date_columns = df.select_dtypes(include=["datetimetz"]).columns
                     for date_column in date_columns:
@@ -260,7 +267,7 @@ class KQL:
         table = kql.split("\n")[0].split(" ")[0].strip()
         try:
             data = analytics_query(workspaces=workspaces, query=kql, timespan=timespan or self.timespan)
-            assert(len(data)) > 0
+            assert (len(data)) > 0
         except Exception as e:
             logger.warning(e)
             data = [{f"{table}": f"No Data in timespan {timespan}"}]
@@ -282,7 +289,8 @@ class KQL:
         df = df.loc[df.sum(axis=1).sort_values(ascending=False)[:rows].index]
         return df
 
-    def label_size(dataframe: pandas.DataFrame, category: str, metric: str, max_categories=9, quantile=0.5, max_scale=10, agg="sum", field="oversized"):
+    @classmethod
+    def label_size(cls, dataframe: pandas.DataFrame, category: str, metric: str, max_categories=9, quantile=0.5, max_scale=10, agg="sum", field="oversized"):
         """
         Annotates a dataframe based on quantile and category sizes, then groups small categories into other
         """
@@ -290,22 +298,25 @@ class KQL:
         sizes = df.groupby(category)[metric].agg(agg).sort_values(ascending=False)
         maxmetric = sizes.quantile(quantile) * max_scale
         normal, oversized = sizes[sizes <= maxmetric], sizes[sizes > maxmetric]
-        df["oversized"] = df[category].isin(oversized.index)
+        df[field] = df[category].isin(oversized.index)
         for others in (normal[max_categories:], oversized[max_categories:]):
             df[category] = df[category].replace({label: f"{others.count()} Others" for label in others.index})
         return df
 
-    def latest_data(df: pandas.DataFrame, timespan: str, col="TimeGenerated"):
+    @classmethod
+    def latest_data(cls, df: pandas.DataFrame, timespan: str, col="TimeGenerated"):
         """
         Return dataframe filtered by timespan
         """
         df = df.copy(deep=True)
         return df[df[col] >= (df[col].max() - pandas.to_timedelta(timespan))].reset_index()
-
-    def hash256(obj, truncate: int = 16):
+    
+    @classmethod
+    def hash256(cls, obj, truncate: int = 16):
         return hashlib.sha256(pickle.dumps(obj)).hexdigest()[:truncate]
 
-    def hash_columns(dataframe: pandas.DataFrame, columns: list):
+    @classmethod
+    def hash_columns(cls, dataframe: pandas.DataFrame, columns: list):
         if not isinstance(columns, list):
             columns = [columns]
         for column in columns:

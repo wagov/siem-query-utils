@@ -9,7 +9,7 @@ from secrets import token_urlsafe
 
 import httpx
 import httpx_cache
-from fastapi import Depends, FastAPI, HTTPException, Request, Body
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import RedirectResponse, Response
 from starlette.middleware.sessions import SessionMiddleware
 
