@@ -42,7 +42,7 @@ def serve():
 
 def jupyterlab(path: str = "."):
     # Launch jupyterlab server (default to current dir as path)
-    run(["bash", "-l", "-c", "jupyter lab"], cwd=clean_path(os.path.expanduser(path)))
+    run(["bash", "-l", "-c", "az login --tenant $TENANT_ID; jupyter lab"], cwd=clean_path(os.path.expanduser(path)))
 
 
 def cli():
