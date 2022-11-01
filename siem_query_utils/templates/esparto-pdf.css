@@ -1,0 +1,60 @@
+@media print {
+    .es-page-title, 
+    .es-section-title, 
+    .es-row-title, 
+    .es-column-title {
+        color: $titles;
+        font-weight: bold;
+    }
+    .es-row-body, 
+    .es-column-body, 
+    .es-card {
+        page-break-inside: avoid;
+    }
+    .es-section-title {
+        page-break-before: always;
+    }
+    #contents-title {
+        page-break-before: avoid !important;
+    }
+    .es-column-body, 
+    .es-card, 
+    .es-card-body {
+        flex: 1 !important;
+        page-break-inside: avoid;
+        margin-bottom: 0.1em !important;
+    }
+}
+html > body {
+    background-color: transparent !important;
+}
+body > main {
+    font-family: $font;
+    font-size: 0.8em;
+    color: $body;
+}
+a {
+    color: $links;
+    font-weight: bold;
+}
+.table {
+    font-size: 0.8em;
+}
+@page {
+    size: A4 portrait;
+    font-family: $font;
+    margin: 1.5cm 1cm;
+    margin-top: 2cm;
+    @bottom-right {
+        font-size: 0.6em;
+        line-height: 1.5em;
+        margin-bottom: -0.2cm;
+        margin-right: -0.5cm;
+        color: $footer;
+        content: "$title ($entity)\A $date | " counter(page) " of " counter(pages);
+        white-space: pre;
+    }
+    background: url("$background");
+    background-position: top -2cm left -1cm;
+    background-size: 210mm 297mm;
+}

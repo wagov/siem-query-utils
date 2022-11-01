@@ -13,6 +13,7 @@ from fastapi.responses import RedirectResponse
 
 from .api import api_2, clean_path, list_workspaces
 from .proxy import proxy_1
+from .reporting import batch_reporting
 
 app = FastAPI(title="SIEM Query Utils Index", version=importlib.metadata.version(__package__))
 app.mount("/api/v2", api_2)

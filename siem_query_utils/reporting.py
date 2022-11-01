@@ -1,7 +1,11 @@
 import hashlib
+import importlib
+import json
+import lzma
 import pickle
 import tempfile
 from concurrent.futures import Future, ThreadPoolExecutor, wait
+from copy import deepcopy
 from pathlib import Path
 from string import Template
 from typing import Union
@@ -14,76 +18,28 @@ from cloudpathlib import AnyPath
 from IPython import display
 from pathvalidate import sanitize_filepath
 
-from .api import analytics_query, config, list_workspaces, logger
+from .api import OutputFormat, analytics_query, config, list_workspaces, cache, api_2, logger
+
+
+def prep_report(name, queries, expires):
+    """Prepare a report for a workspace"""
+    kp = KQL()
+    kp.set_agency(name)
+    kp.load_queries(queries, caching=expires)
+
+
+@api_2.post("/load_report_queries")
+def batch_reporting(queries: dict, expires="1 day"):
+    """Run reporting on all workspaces"""
+    for name in list_workspaces(format=OutputFormat.df)["SecOps Group"].dropna().unique():
+        if name:
+            prep_report(name, queries, expires)
+    prep_report("ALL", queries, expires)
 
 
 class KQL:
     base_css = tinycss2.parse_stylesheet(open(esparto.options.esparto_css).read())
-
-    pdf_css = Template(
-        """
-    @media print {
-        .es-page-title, 
-        .es-section-title, 
-        .es-row-title, 
-        .es-column-title {
-            color: $titles;
-            font-weight: bold;
-        }
-        .es-row-body, 
-        .es-column-body, 
-        .es-card {
-            page-break-inside: avoid;
-        }
-        .es-section-title {
-            page-break-before: always;
-        }
-        #contents-title {
-            page-break-before: avoid !important;
-        }
-        .es-column-body, 
-        .es-card, 
-        .es-card-body {
-            flex: 1 !important;
-            page-break-inside: avoid;
-            margin-bottom: 0.1em !important;
-        }
-    }
-    html > body {
-        background-color: transparent !important;
-    }
-    body > main {
-        font-family: $font;
-        font-size: 0.8em;
-        color: $body;
-    }
-    a {
-        color: $links;
-        font-weight: bold;
-    }
-    .table {
-        font-size: 0.8em;
-    }
-    @page {
-        size: A4 portrait;
-        font-family: $font;
-        margin: 1.5cm 1cm;
-        margin-top: 2cm;
-        @bottom-right {
-            font-size: 0.6em;
-            line-height: 1.5em;
-            margin-bottom: -0.2cm;
-            margin-right: -0.5cm;
-            color: $footer;
-            content: "$title ($entity)\A $date | " counter(page) " of " counter(pages);
-            white-space: pre;
-        }
-        background: url("$background");
-        background-position: top -2cm left -1cm;
-        background-size: 210mm 297mm;
-    }
-    """
-    )
+    pdf_css = Template(importlib.resources.read_text(f"{__package__}.templates", "esparto-pdf.css"))
 
     sns = seaborn
 
@@ -133,39 +89,56 @@ class KQL:
             self.sampleworkspaces = False
         return self
 
-    def load_queries(self, queries: dict({str: str})):
+    def load_queries(self, queries: dict({str: str}), caching: str = None):
         """
         load a bunch of kql into dataframes
         """
+        queries = deepcopy(queries)
+        kusto_key = hashlib.sha256(json.dumps(queries, sort_keys=True).encode()).hexdigest()
+        cache_key = f"{self.agency}_{kusto_key}.lzma"  # cache is valid for 1 day
+        query_cache = self.nbpath / "query_cache" / cache_key
+        if caching and query_cache.exists() and query_cache.stat().st_mtime > (self.today - pandas.Timedelta(caching)).timestamp():
+            logger.info(f"Loading cached queries from {query_cache}")
+            cacheitem = pickle.loads(lzma.decompress(query_cache.read_bytes()))
+            self.queries = cacheitem["queries"]
+            self.querystats = cacheitem["querystats"]
+            return
+        kusto = cache.get(kusto_key)
+        if kusto is None:
+            kusto = {k: (self.kql / sanitize_filepath(v)).read_text() for k, v in queries.items()}
+            cache.set(kusto_key, kusto, ttl=60 * 60 * 24)
         querystats = {}
-        with ThreadPoolExecutor() as executor:
-            print(
+        with ThreadPoolExecutor(max_workers=config("max_threads")) as executor:
+            logger.info(
                 f"Running {len(queries.keys())} queries across {self.agency_name}: {len(self.sentinelworkspaces)} workspaces (sample: {self.sample_agency}): "
             )
             for key, kql in queries.items():
                 if self.sample_only:
                     # force return no results to fallback to sample data
-                    query = (self.kql / kql).open().read()
+                    query = kusto[key]
                     table = query.split("\n")[0].split(" ")[0].strip()
                     df = pandas.DataFrame([{f"{table}": f"No Data in timespan {self.timespan}"}])
                     queries[key] = (kql, df)
                     querystats[key] = [0, f"{df.columns[0]} - {df.iloc[0,0]}", kql]
                 else:
-                    queries[key] = (kql, executor.submit(self.kql2df, kql))
+                    queries[key] = (kql, executor.submit(self.kql2df, kusto[key]))
             wait([f for kql, f in queries.values() if isinstance(f, Future)])
-            queries.update({key: (f[0], f[1].result()) for key, f in queries.items() if isinstance(f[1], Future)})
-            for key, df in queries.items():
-                kql, df = df
+            queries.update({key: (kql, future.result()) for key, (kql, future) in queries.items() if isinstance(future, Future)})
+            for key, (kql, df) in queries.items():
                 if df.shape == (1, 1) and df.iloc[0, 0].startswith("No Data"):
                     querystats[key] = [0, f"{df.columns[0]} - {df.iloc[0,0]}", kql]
                     if self.sampleworkspaces:
-                        queries[key] = (kql, executor.submit(self.kql2df, kql, workspaces=self.sampleworkspaces))
+                        queries[key] = (kql, executor.submit(self.kql2df, kusto[key], workspaces=self.sampleworkspaces))
                 else:
                     querystats[key] = [df.count().max(), len(df.columns), kql]
             wait([f for kql, f in queries.values() if isinstance(f, Future)])
-            queries.update({key: (f[0], f[1].result()) for key, f in queries.items() if isinstance(f[1], Future)})
+            queries.update({key: (kql, future.result()) for key, (kql, future) in queries.items() if isinstance(future, Future)})
             self.queries = queries
         self.querystats = pandas.DataFrame(querystats).T.rename(columns={0: "Rows", 1: "Columns", 2: "KQL"}).sort_values("Rows")
+        if caching:
+            cacheitem = {"querystats": self.querystats, "queries": self.queries}
+            data = lzma.compress(pickle.dumps(cacheitem))
+            query_cache.write_bytes(data)
 
     def load_templates(self, mdpath: str):
         """
@@ -239,7 +212,7 @@ class KQL:
             else:
                 dfs[name] = data[1]
         with tempfile.NamedTemporaryFile(mode="w+b", suffix=".xlsx") as excel_file_tmp:
-            with pandas.ExcelWriter(excel_file_tmp) as writer: # pylint: disable=abstract-class-instantiated
+            with pandas.ExcelWriter(excel_file_tmp) as writer:  # pylint: disable=abstract-class-instantiated
                 for name, df in dfs.items():
                     date_columns = df.select_dtypes(include=["datetimetz"]).columns
                     for date_column in date_columns:
@@ -262,8 +235,6 @@ class KQL:
         # Parse results as json and return as a dataframe
         if not workspaces:
             workspaces = self.sentinelworkspaces
-        if kql.endswith(".kql") and (self.kql / sanitize_filepath(kql)).exists():
-            kql = (self.kql / sanitize_filepath(kql)).open().read()
         table = kql.split("\n")[0].split(" ")[0].strip()
         try:
             data = analytics_query(workspaces=workspaces, query=kql, timespan=timespan or self.timespan)
@@ -310,7 +281,7 @@ class KQL:
         """
         df = df.copy(deep=True)
         return df[df[col] >= (df[col].max() - pandas.to_timedelta(timespan))].reset_index()
-    
+
     @classmethod
     def hash256(cls, obj, truncate: int = 16):
         return hashlib.sha256(pickle.dumps(obj)).hexdigest()[:truncate]
