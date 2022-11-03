@@ -15,9 +15,8 @@ import seaborn
 import tinycss2
 from cloudpathlib import AnyPath
 from IPython import display
-from pathvalidate import sanitize_filepath
 
-from .api import OutputFormat, settings, list_workspaces
+from .api import OutputFormat, load_dataframes, settings, list_workspaces
 from .azcli import clean_path, logger
 
 # Global default settings
@@ -47,7 +46,8 @@ class EspartoReport:
         agency: str,
         path: Union[Path, AnyPath] = None,
         template: str = "markdown/report-sentinel.md",
-        subfolder: str = "notebooks",
+        background: str = "markdown/background.png",
+        query_cache: str = None,
     ):
         """
         Convenience tooling for loading pandas dataframes using context from a path.
@@ -65,16 +65,11 @@ class EspartoReport:
               `--*/*/*.pdf
         """
         if not path:
-            path = settings("datalake_path")
+            path = settings("datalake_path") / "notebooks"
+        self.path = path
+        self.background = background
         self.pdf_css_file = tempfile.NamedTemporaryFile(delete=False, mode="w+t", suffix=".css")
-        self.path, self.nbpath = path, path / sanitize_filepath(subfolder)
-        self.kql, self.lists, self.reports = (
-            self.nbpath / "kql",
-            self.nbpath / "lists",
-            self.nbpath / "reports",
-        )
         self.today = pandas.Timestamp("today")
-        self.load_templates(mdpath=template)
         # if sample_only = True, build report with only mock data
         # if sample_only = False, build report as usual, only substituting missing data with sample data
         # sections should 'anonymise' sample data prior to rendering
@@ -85,6 +80,10 @@ class EspartoReport:
         else:
             self.agency_info = wsdf[wsdf["SecOps Group"] == agency]
             self.agency_name = self.agency_info["Primary agency"].max()
+        self.load_templates(mdpath=template)
+        if not query_cache:
+            query_cache = f"query_cache/{self.today.strftime('%Y-%m')}/{agency}_sentinel.zip"
+        self.queries = load_dataframes(self.path / query_cache)
         self.report = esparto.Page(title=self.report_title)
 
     def load_templates(self, mdpath: str):
@@ -95,25 +94,35 @@ class EspartoReport:
         Report title set based on h1 title at top of document
         Sections split with a horizontal rule, and keys are set based on h2's.
         """
-        if not mdpath:
-            logger.warning("No markdown template provided, skipping")
+        mdpath = self.path / mdpath
+        if not mdpath.exists():
+            logger.warning(f"Could not read template at {mdpath}")
             return
-        md_tmpls = (self.nbpath / mdpath).open().read().split("\n---\n\n")
+        md_tmpls = mdpath.read_text().split("\n---\n\n")
         md_tmpls = [tmpl.split("\n", 1) for tmpl in md_tmpls]
         self.report_title = md_tmpls[0][0].replace("# ", "")
         self.report_sections = {
             title.replace("## ", ""): Template(content) for title, content in md_tmpls[1:]
         }
 
-    def init_report(self, table_of_contents=True, **css_params):
+    def init_report(self, table_of_contents=True, **css_params) -> esparto.Page:
+        """
+        Render the report title and table of contents after applying css
+
+        Args:
+            table_of_contents (bool, optional): Whether to render a table of contents. Defaults to True.
+
+        Returns:
+            esparto.Page: The report object
+        """
         # Return an esparto page for reporting after customising css
         base_css = [
             r for r in self.base_css if not hasattr(r, "at_keyword")
         ]  # strip media/print styles so we can replace
 
-        bg = css_params["background"]
-        background_file = tempfile.NamedTemporaryFile(delete=False, mode="w+b", suffix=bg.suffix)
-        background_file.write(bg.read_bytes())
+        background = self.path / self.background
+        background_file = tempfile.NamedTemporaryFile(delete=False, mode="w+b", suffix="png")
+        background_file.write(background.read_bytes())
         background_file.flush()
         css_params["background"] = f"file://{background_file.name}"
         extra_css = tinycss2.parse_stylesheet(
@@ -132,7 +141,7 @@ class EspartoReport:
         return self.report
 
     def report_pdf(self, preview=True, savehtml=False):
-        report_dir = self.reports / self.agency
+        report_dir = self.path / f"reports/{self.agency}"
         report_dir.mkdir(parents=True, exist_ok=True)
 
         filename = f"{self.today.strftime('%Y-%m')} {self.report_title} ({self.agency}).pdf"

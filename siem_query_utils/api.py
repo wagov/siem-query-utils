@@ -344,7 +344,8 @@ def save_dataframes(obj: dict[pandas.DataFrame], path: AnyPath):
         for name, dataframe in obj.items():
             if not isinstance(dataframe, pandas.DataFrame):  # handle futures
                 dataframe = dataframe.result()
-            dataframe = dataframe.loc[:, dataframe.nunique() > 1]  # throw out invariant columns
+            if dataframe.shape[0] > 1:
+                dataframe = dataframe.loc[:, dataframe.nunique() > 1]  # throw out invariant columns
             with mem_zipfile.open(
                 zipfile.ZipInfo(f"{name}.csv", date_time=datetime.now().timetuple()), "w"
             ) as csv_file:
@@ -364,14 +365,12 @@ def load_dataframes(path: AnyPath) -> dict[pandas.DataFrame]:
         dict[pandas.DataFrame]: Dictionary of dataframes
     """
     logger.debug(f"Decompressing {path}")
+    obj = {}
     with zipfile.ZipFile(path, "r") as mem_zipfile:
-        obj = {name: pandas.read_csv(mem_zipfile.open(name)) for name in mem_zipfile.namelist()}
-    for name, dataframe in obj.items():
-        dataframe = dataframe[dataframe.columns].apply(pandas.to_numeric, errors="ignore")
-        if "TimeGenerated" in dataframe.columns:
-            dataframe["TimeGenerated"] = pandas.to_datetime(dataframe["TimeGenerated"])
-        dataframe = dataframe.convert_dtypes()
-        obj[name] = dataframe
+        for name in mem_zipfile.namelist():
+            with mem_zipfile.open(name) as csv_file:
+                logger.debug(name)
+                obj[name[:-4]] = pandas.read_csv(csv_file)
     return obj
 
 
