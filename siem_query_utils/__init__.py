@@ -1,50 +1,52 @@
+# pylint: disable=line-too-long
 import importlib
 import os
+from secrets import token_urlsafe
 from subprocess import Popen, run
 
 import uvicorn
-from dotenv import load_dotenv
-from fire import Fire
-
-load_dotenv()
-
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
+from fire import Fire
+from starlette.middleware.sessions import SessionMiddleware
 
-from .api import api_2, clean_path, list_workspaces
-from .proxy import proxy_1
-from .reporting import batch_reporting
+from . import api, proxy, sentinel_beautify
 
-app = FastAPI(title="SIEM Query Utils Index", version=importlib.metadata.version(__package__))
-app.mount("/api/v2", api_2)
-app.mount("/proxy", proxy_1)
+app = FastAPI(title="SIEM Query Utils API v2", version=importlib.metadata.version(__package__))
+app.include_router(api.router, prefix="/api/v2", tags=["siemqueryutils"])
+app.include_router(sentinel_beautify.router, prefix="/api/v2", tags=["sentinel_beautify"])
+app.include_router(proxy.router, tags=["proxy"])
+app.add_middleware(SessionMiddleware, secret_key=token_urlsafe(), session_cookie="siem_query_utils", same_site="strict")
 
 
 @app.get("/")
 def index():
-    return RedirectResponse("/proxy/main_path")
+    """
+    Redirect to /proxy/main_path
+    """
+    return RedirectResponse("/main_path")
 
 
 def atlaskit():
     # launch node helper on port 3000 (handle running in a non interactive session for nvm/node access)
-    run(["bash", "-l", "-c", "node atlaskit-transformer/main.mjs"])
+    run(["bash", "-l", "-c", "node atlaskit-transformer/main.mjs"], check=False)
 
 
 def serve():
     # launch background node helper on port 3000 (handle running in a non interactive session for nvm/node access)
-    atlaskit = Popen(["bash", "-l", "-c", "node atlaskit-transformer/main.mjs"], close_fds=True)
+    background_atlaskit = Popen(["bash", "-l", "-c", "node atlaskit-transformer/main.mjs"], close_fds=True)
     # serve on port 8000, assume running behind a trusted reverse proxy
     host, port = "0.0.0.0", 8000
     # Launch main uvicor server
     uvicorn.run(app, port=port, host=host, log_level=os.environ.get("LOG_LEVEL", "WARNING").lower(), proxy_headers=True)
     # Clean up node helper
-    atlaskit.kill()
+    background_atlaskit.kill()
 
 
 def jupyterlab(path: str = "."):
     # Launch jupyterlab server (default to current dir as path)
-    run(["bash", "-l", "-c", "az login --tenant $TENANT_ID; jupyter lab"], cwd=clean_path(os.path.expanduser(path)))
+    run(["bash", "-l", "-c", "az login --tenant $TENANT_ID; jupyter lab"], cwd=api.clean_path(os.path.expanduser(path)), check=False)
 
 
 def cli():
-    Fire({"listWorkspaces": list_workspaces, "serve": serve, "jupyterlab": jupyterlab, "atlaskit": atlaskit})
+    Fire({"listWorkspaces": api.list_workspaces, "serve": serve, "jupyterlab": jupyterlab, "atlaskit": atlaskit})

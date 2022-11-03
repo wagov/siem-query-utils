@@ -1,32 +1,38 @@
+# pylint: disable=logging-fstring-interpolation, unspecified-encoding, line-too-long, missing-function-docstring
 import base64
 import hashlib
 import hmac
 import importlib
 import json
 import logging
+import lzma
 import os
-import httpx
-from collections import namedtuple
+from collections import namedtuple, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from enum import Enum
 from mimetypes import guess_type
 from pathlib import Path
+import pickle
 from string import Template
 from typing import Any, Optional
 
+import httpx
 import pandas
 import requests
 from azure.cli.core import get_default_cli
 from azure.storage.blob import BlobServiceClient
 from cacheout import Cache
-from cloudpathlib import AzureBlobClient
+from cloudpathlib import AzureBlobClient, AnyPath
 from dateutil.parser import isoparse
-from fastapi import BackgroundTasks, Body, FastAPI, HTTPException, Request, Response
-from fastapi.responses import StreamingResponse, PlainTextResponse
-from flatten_json import flatten
-from markdown import markdown
+from dotenv import load_dotenv
+from fastapi import BackgroundTasks, Body, APIRouter, HTTPException, Request, Response
+from fastapi.responses import PlainTextResponse, StreamingResponse
+
 from pathvalidate import sanitize_filepath
+
+load_dotenv()
+
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -41,30 +47,30 @@ def clean_path(path: str):
 
 app_state = {"logged_in": False, "login_time": datetime.utcnow() - timedelta(days=1)}  # last login 1 day ago to force relogin
 
-api_2 = FastAPI(title="SIEM Query Utils API v2", version=importlib.metadata.version(__package__))
+router = APIRouter()
 
 
 class OutputFormat(str, Enum):
-    json = "json"
-    csv = "csv"
-    list = "list"
-    df = "df"
+    JSON = "json"
+    CSV = "csv"
+    LIST = "list"
+    DF = "df"
 
 
-def bootstrap(app_state):
+def bootstrap(_app_state):
     try:
         prefix, subscription = os.environ["DATALAKE_BLOB_PREFIX"], os.environ["DATALAKE_SUBSCRIPTION"]
-    except:
-        raise Exception("Please set DATALAKE_BLOB_PREFIX and DATALAKE_SUBSCRIPTION env vars")
+    except Exception as exc:
+        raise Exception("Please set DATALAKE_BLOB_PREFIX and DATALAKE_SUBSCRIPTION env vars") from exc
     account, container = prefix.split("/")[2:]
-    app_state.update(
+    _app_state.update(
         {
             "datalake_blob_prefix": prefix,  # e.g. "https://{datalake_account}.blob.core.windows.net/{datalake_container}"
             "datalake_subscription": subscription,
             "datalake_account": account,
             "datalake_container": container,
             "email_template": Template(importlib.resources.read_text(f"{__package__}.templates", "email-template.html")),
-            "datalake_path": BlobPath(prefix, subscription),
+            "datalake_path": get_blob_path(prefix, subscription),
             "email_footer": os.environ.get("FOOTER_HTML", "Set FOOTER_HTML env var to configure this..."),
             "max_threads": int(os.environ.get("MAX_THREADS", "20")),
             "data_collector_connstring": os.environ.get("AZMONITOR_DATA_COLLECTOR"),  # kinda optional
@@ -88,12 +94,12 @@ def login(refresh: bool = False):
     else:
         loginstatus = cli.invoke(["account", "show", "-o", "json"], out_file=open(os.devnull, "w"))
         try:
-            cli.result.result["environmentName"]
+            assert "environmentName" in cli.result.result
             app_state["logged_in"] = True
             app_state["login_time"] = datetime.utcnow()
-        except Exception as e:
+        except AssertionError as exc:
             # bail as we aren't able to login
-            logger.error(e)
+            logger.error(exc)
             exit()
     # setup all other env vars
     bootstrap(app_state)
@@ -117,7 +123,7 @@ def azcli(cmd: list, error_result: Any = None):
     cli.invoke(cmd, out_file=open(os.devnull, "w"))
     if cli.result.error:
         logger.warning(cli.result.error)
-        if error_result is not None:
+        if error_result is None:
             raise cli.result.error
         else:
             return error_result
@@ -151,7 +157,7 @@ def generatesas(account: str = None, container: str = None, subscription: str = 
     return result
 
 
-def BlobPath(url: str, subscription: str = ""):
+def get_blob_path(url: str, subscription: str = ""):
     """
     Mounts a blob url using azure cli
     If called with no subscription, just returns a pathlib.Path pointing to url (for testing)
@@ -165,7 +171,7 @@ def BlobPath(url: str, subscription: str = ""):
     return blobclient.CloudPath(f"az://{container}")
 
 
-@api_2.get("/datalake/{path:path}")
+@router.get("/datalake/{path:path}")
 def datalake(path: str):
     """
     Downloads a file from the datalake, e.g. `notebooks/lists/SentinelWorkspaces.csv`
@@ -192,8 +198,8 @@ def datalake_json(path: str, content=None, modified_key: Optional[str] = None):
     return content
 
 
-@api_2.get("/loadkql", response_class=PlainTextResponse)
-def load_KQL(query: str) -> str:
+@router.get("/loadkql", response_class=PlainTextResponse)
+def load_kql(query: str) -> str:
     """
     - If query starts with kql/ then load it from a package resource and return text
     - If query starts with kql:// then load it from {KQL_BASEURL} and return text
@@ -206,53 +212,52 @@ def load_KQL(query: str) -> str:
         base_url = os.environ["KQL_BASEURL"]
         path = clean_path(query.replace("kql://", "", 1))
         url = f"{base_url}/{path}"
-        query = requests.get(url).text.strip()
+        query = requests.get(url, timeout=10).text.strip()
     logger.debug(f"KQL Query:\n{query}")
     return query
 
 
-def analytics_query(workspaces: list, query: str, timespan: str = "P7D", groupQueries=True):
+def analytics_query(workspaces: list, query: str, timespan: str = "P7D", group_queries=True):
     "Queries a list of workspaces using kusto"
-    query = load_KQL(query)
+    query = load_kql(query)
     cmd_base = ["monitor", "log-analytics", "query", "--analytics-query", query, "--timespan", timespan]
-    if groupQueries or len(workspaces) == 1:
+    if group_queries or len(workspaces) == 1:
         cmd = cmd_base + ["--workspace", workspaces[0]]
         if len(workspaces) > 1:
             cmd += ["--workspaces"] + workspaces[1:]
         try:
             return azcli(cmd, error_result="raise")  # big grouped query
-        except Exception as e:
-            logger.warning(e)
+        except Exception as exc:
+            logger.warning(exc)
             logger.warning("falling back to individual queries")
-            pass
     # run each query separately and stitch results, 20 at a time.
     results = []
     with ThreadPoolExecutor(max_workers=config("max_threads")) as executor:
-        futures = {ws: executor.submit(azcli, cmd_base + ["--workspace", ws], error_result=[]) for ws in workspaces}
-        for ws, future in futures.items():
+        futures = {workspace: executor.submit(azcli, cmd_base + ["--workspace", workspace], error_result=[]) for workspace in workspaces}
+        for workspace, future in futures.items():
             result = future.result()
             for item in result:
-                item.update({"TenantId": ws})
+                item.update({"TenantId": workspace})
             results += result
     return results
 
 
-@api_2.get("/listWorkspaces")
+@router.get("/listWorkspaces")
 @cache.memoize(ttl=60 * 60 * 3)  # 3 hr cache
-def list_workspaces(format: OutputFormat = OutputFormat.list):
+def list_workspaces(fmt: OutputFormat = OutputFormat.LIST):
     "Get sentinel workspaces from {datalake}/notebooks/lists/SentinelWorkspaces.csv"
     # return workspaces dataframe from the datalake
-    df = pandas.read_csv((config("datalake_path") / "notebooks/lists/SentinelWorkspaces.csv").open()).join(
+    dataframe = pandas.read_csv((config("datalake_path") / "notebooks/lists/SentinelWorkspaces.csv").open()).join(
         pandas.read_csv((config("datalake_path") / "notebooks/lists/SecOps Groups.csv").open()).set_index("Alias"), on="SecOps Group", rsuffix="_secops"
     )
-    if format == OutputFormat.list:
-        return list(df.customerId.dropna())
-    elif format == OutputFormat.json:
-        return df.fillna("").to_dict("records")
-    elif format == OutputFormat.csv:
-        return df.to_csv()
-    elif format == OutputFormat.df:
-        return df
+    if fmt == OutputFormat.LIST:
+        return list(dataframe.customerId.dropna())
+    elif fmt == OutputFormat.JSON:
+        return dataframe.fillna("").to_dict("records")
+    elif fmt == OutputFormat.CSV:
+        return dataframe.to_csv()
+    elif fmt == OutputFormat.DF:
+        return dataframe
 
 
 def upload_results(results, blobdest, filenamekeys):
@@ -270,193 +275,21 @@ def atlaskit_client():
     return httpx.Client(base_url="http://127.0.0.1:3000")
 
 
-class atlaskitfmt(str, Enum):
-    markdown = "md"
-    json = "adf"
-    wikimarkup = "wiki"
+class AtlaskitFmt(str, Enum):
+    MARKDOWN = "md"
+    JSON = "adf"
+    WIKIMARKUP = "wiki"
 
 
-@api_2.post("/atlaskit/{input}/to/{output}")
-def atlaskit(request: Request, input: atlaskitfmt, output: atlaskitfmt, body=Body("# Test Header", media_type="text/plain")):
+@router.post("/atlaskit/{input}/to/{output}")
+def atlaskit(request: Request, srcfmt: AtlaskitFmt, destfmt: AtlaskitFmt, body=Body("# Test Header", media_type="text/plain")):
     """
     Converts between atlaskit formats using js modules.
     """
-    origin = atlaskit_client().post(f"/{input}/to/{output}", content=body, headers={"content-type": request.headers["content-type"]})
+    origin = atlaskit_client().post(f"/{srcfmt}/to/{destfmt}", content=body, headers={"content-type": request.headers["content-type"]})
     return Response(status_code=origin.status_code, content=origin.content)
 
 
-@api_2.get("/sentinelBeautify")
-def sentinel_beautify(blob_path: str, outputformat: str = "jira", default_status: str = "Onboard: MOU (T0)", default_orgid: int = 2):
-    """
-    Takes a SecurityIncident from sentinel, and retreives related alerts and returns markdown, html and detailed json representation.
-    """
-    valid_prefix = "sentinel_outputs/incidents"
-    if not blob_path.startswith(valid_prefix):
-        return f"Blob path must start with {valid_prefix}"
-    data = datalake_json(blob_path)
-    labels = [f"SIEM_Severity:{data['Severity']}", f"SIEM_Status:{data['Status']}", f"SIEM_Title:{data['Title']}"]
-    labels += [l["labelName"] for l in json.loads(data["Labels"])]  # copy over labels from incident
-    incident_details = [data["Description"], ""]
-
-    if data.get("Owner"):
-        data["Owner"] = json.loads(data["Owner"])
-        owner = None
-        if data["Owner"].get("email"):
-            owner = data["Owner"]["email"]
-        elif data["Owner"].get("userPrincipalName"):
-            owner = data["Owner"]["userPrincipalName"]
-        if owner:
-            labels.append(f"SIEM_Owner:{owner}")
-            incident_details.append(f"- **Sentinel Incident Owner:** {owner}")
-
-    if data.get("Classification"):
-        labels.append(f"SIEM_Classification:{data['Classification']}")
-        incident_details.append(f"- **Alert Classification:** {data['Classification']}")
-
-    if data.get("ClassificationReason"):
-        labels.append(f"SIEM_ClassificationReason:{data['ClassificationReason']}")
-        incident_details.append(f"- **Alert Classification Reason:** {data['ClassificationReason']}")
-
-    if data.get("ProviderName"):
-        labels.append(f"SIEM_ProviderName:{data['ProviderName']}")
-        incident_details.append(f"- **Provider Name:** {data['ProviderName']}")
-
-    if data.get("AdditionalData"):
-        data["AdditionalData"] = json.loads(data["AdditionalData"])
-        if data["AdditionalData"].get("alertProductNames"):
-            alertProductNames = ",".join(data["AdditionalData"]["alertProductNames"])
-            labels.append(f"SIEM_alertProductNames:{alertProductNames}")
-            incident_details.append(f"- **Product Names:** {alertProductNames}")
-        if data["AdditionalData"].get("tactics"):
-            tactics = ",".join(data["AdditionalData"]["tactics"])
-            labels.append(f"SIEM_tactics:{tactics}")
-            incident_details.append(f"- **[MITRE ATT&CK Tactics](https://attack.mitre.org/tactics/):** {tactics}")
-        if data["AdditionalData"].get("techniques"):
-            techniques = ",".join(data["AdditionalData"]["techniques"])
-            labels.append(f"SIEM_techniques:{techniques}")
-            incident_details.append(f"- **[MITRE ATT&CK Techniques](https://attack.mitre.org/techniques/):** {techniques}")
-
-    comments = []
-    if data.get("Comments"):
-        data["Comments"] = json.loads(data["Comments"])
-        if len(data["Comments"]) > 0:
-            comments += ["", "## Comments"]
-            for comment in data["Comments"]:
-                comments += comment["message"].split("\n")
-            comments += [""]
-
-    alert_details = []
-    observables = []
-    entity_type_value_mappings = {
-        "host": "{HostName}",
-        "account": "{Name}",
-        "process": "{CommandLine}",
-        "file": "{Name}",
-        "ip": "{Address}",
-        "url": "{Url}",
-        "dns": "{DomainName}",
-        "registry-key": "{Hive}{Key}",
-        "filehash": "{Algorithm}{Value}",
-    }
-
-    class Default(dict):
-        def __missing__(self, key):
-            return key
-
-    if data.get("AlertIds") and config("datalake_blob_prefix"):
-        data["AlertIds"] = json.loads(data["AlertIds"])
-        alertdata = []
-        for alertid in reversed(data["AlertIds"]):  # walk alerts from newest to oldest, max 10
-            # below should be able to find all the alerts from the latest day of activity
-            try:
-                url = f"sentinel_outputs/alerts/{data['LastActivityTime'].split('T')[0]}/{data['TenantId']}_{alertid}.json"
-                alert = datalake_json(url)
-            except Exception as e:  # alert may not exist on day of last activity time
-                logger.warning(e)
-                break
-            else:
-                if not alert_details:
-                    alert_details += ["", "## Alert Details", f"The last day of activity (up to 20 alerts) is summarised below from newest to oldest."]
-                alert_details.append(
-                    f"### [{alert['AlertName']} (Severity:{alert['AlertSeverity']}) - TimeGenerated {alert['TimeGenerated']}]({alert['AlertLink']})"
-                )
-                alert_details.append(alert["Description"])
-                for key in ["RemediationSteps", "ExtendedProperties", "Entities"]:  # entities last as may get truncated
-                    if alert.get(key):
-                        alert[key] = json.loads(alert[key])
-                        if key == "Entities":  # add the entity to our list of observables
-                            for entity in alert[key]:
-                                if "Type" in entity:
-                                    observable = {
-                                        "type": entity["Type"],
-                                        "value": entity_type_value_mappings.get(entity["Type"], "").format_map(Default(entity)),
-                                    }
-                                if not observable["value"]:  # dump whole dict as string if no mapping found
-                                    observable["value"] = repr(entity)
-                                observables.append(observable)
-                        if alert[key] and isinstance(alert[key], list) and isinstance(alert[key][0], dict):
-                            # if list of dicts, make a table
-                            for index, entry in enumerate([flatten(item) for item in alert[key] if len(item.keys()) > 1]):
-                                alert_details += ["", f"#### {key}.{index}"]
-                                for entrykey, value in entry.items():
-                                    if value:
-                                        alert_details.append(f"- **{entrykey}:** {value}")
-                        elif isinstance(alert[key], dict):  # if dict display as list
-                            alert_details += ["", f"#### {key}"]
-                            for entrykey, value in alert[key].items():
-                                if value and len(value) < 200:
-                                    alert_details.append(f"- **{entrykey}:** {value}")
-                                elif value:  # break out long blocks
-                                    alert_details += [f"- **{entrykey}:**", "", "```", value, "```", ""]
-                        else:  # otherwise just add as separate lines
-                            alert_details += ["", f"#### {key}"] + [item for item in alert[key]]
-                alertdata.append(alert)
-                if len(alertdata) >= 20:
-                    # limit max number of alerts retreived
-                    break
-        data["AlertData"] = alertdata
-
-    title = f"SIEM Detection #{data['IncidentNumber']} Sev:{data['Severity']} - {data['Title']} (Status:{data['Status']})"
-    mdtext = (
-        [
-            f"# {title}",
-            "",
-            f"## [SecurityIncident #{data['IncidentNumber']} Details]({data['IncidentUrl']})",
-            "",
-        ]
-        + incident_details
-        + comments
-        + alert_details
-    )
-    mdtext = "\n".join([str(line) for line in mdtext])
-    content = markdown(mdtext, extensions=["tables"])
-    html = config("email_template").substitute(title=title, content=content, footer=config("email_footer"))
-    # remove special chars and deduplicate labels
-    labels = set("".join(c for c in label if c.isalnum() or c in ".:_") for label in labels)
-
-    response = {
-        "subject": title,
-        "labels": list(labels),
-        "observables": [dict(ts) for ts in set(tuple(i.items()) for i in observables)],
-        "sentinel_data": data,
-    }
-    if outputformat == "jira":
-        df = list_workspaces(OutputFormat.df)
-        customer = df[df["customerId"] == data["TenantId"]].fillna('').to_dict("records")
-        if len(customer) > 0:
-            customer = customer[0]
-        else:
-            customer = {}
-        # Grab wiki format for jira and truncate to 32767 chars
-        response.update({
-            "secops_status": customer.get("SecOps Status") or default_status,
-            "jira_orgid": customer.get("JiraOrgId") or default_orgid,
-            "customer": customer,
-            "wikimarkup": atlaskit_client().post(f"/md/to/wiki", content=mdtext, headers={"content-type": "text/plain"}).content[:32760]
-        })
-    else:
-        response.update({"html": html, "markdown": mdtext})
-    return response
 
 
 # Build the API signature
@@ -466,7 +299,7 @@ def build_la_signature(customer_id, shared_key, date, content_length, method, co
     bytes_to_hash = bytes(string_to_hash, encoding="utf-8")
     decoded_key = base64.b64decode(shared_key)
     encoded_hash = base64.b64encode(hmac.new(decoded_key, bytes_to_hash, digestmod=hashlib.sha256).digest()).decode()
-    authorization = "SharedKey {}:{}".format(customer_id, encoded_hash)
+    authorization = f"SharedKey {customer_id}:{encoded_hash}"
     return authorization
 
 
@@ -479,20 +312,22 @@ SecurityIncident
 )
 
 
-@api_2.get("/query")
-@api_2.post("/query")
-def query_all(query: str = ExampleQuery, groupQueries: bool = True, timespan: str = "P7D", format: OutputFormat = OutputFormat.json):
+@router.get("/query")
+@router.post("/query")
+def query_all(query: str = ExampleQuery, group_queries: bool = True, timespan: str = "P7D", fmt: OutputFormat = OutputFormat.JSON):
     """
     Query all workspaces from `/listWorkspaces` using kusto.
     """
-    results = analytics_query(list_workspaces(), query, timespan, groupQueries=groupQueries)
-    if format == OutputFormat.json:
+    results = analytics_query(list_workspaces(), query, timespan, group_queries=group_queries)
+    if fmt == OutputFormat.JSON:
         return results
-    elif format in [OutputFormat.csv, OutputFormat.list]:
+    elif fmt in [OutputFormat.CSV, OutputFormat.LIST]:
         return pandas.DataFrame.from_dict(results).to_csv()
+    elif fmt == OutputFormat.DF:
+        return pandas.DataFrame.from_dict(results)
 
 
-@api_2.post("/collect")
+@router.post("/collect")
 def collect(table: str, tasks: BackgroundTasks, query: str = ExampleQuery, timespan: str = "P7D", target_workspace: str = None):
     """
     - Query all workspaces from `/listWorkspaces` using kusto.
@@ -505,7 +340,7 @@ def collect(table: str, tasks: BackgroundTasks, query: str = ExampleQuery, times
     return len(results)
 
 
-@api_2.post("/summarise")
+@router.post("/summarise")
 def summarise(blobpath: str, query: str = ExampleQuery, timespan: str = "P7D"):
     """
     - Query all workspaces in {datalake}/notebooks/lists/SentinelWorkspaces.csv using kusto.
@@ -519,7 +354,87 @@ def summarise(blobpath: str, query: str = ExampleQuery, timespan: str = "P7D"):
     return len(results)
 
 
-@api_2.post("/export")
+def compress_pickle(obj, path: AnyPath):
+    logger.debug(f"Compressing {path}")
+    path.write_bytes(lzma.compress(pickle.dumps(obj)))
+
+
+def decompress_pickle(path: AnyPath):
+    logger.debug(f"Decompressing {path}")
+    return pickle.loads(lzma.decompress(path.read_bytes()))
+
+
+def sentinel_to_dataframe(kql: str, timespan: str, workspaces: list[str]):
+    # Load or directly query kql against workspaces
+    # Parse results as json and return as a dataframe
+    table = kql.split("\n")[0].split(" ")[0].strip()
+    try:
+        data = analytics_query(workspaces=workspaces, query=kql, timespan=timespan)
+        assert (len(data)) > 0
+    except Exception as exc:
+        logger.warning(exc)
+        data = [{f"{table}": f"No Data in timespan {timespan}"}]
+    dataframe = pandas.DataFrame.from_records(data)
+    dataframe = dataframe[dataframe.columns].apply(pandas.to_numeric, errors="ignore")
+    if "TimeGenerated" in dataframe.columns:
+        dataframe["TimeGenerated"] = pandas.to_datetime(dataframe["TimeGenerated"])
+    dataframe = dataframe.convert_dtypes()
+    return dataframe
+
+
+def external_api(client, path: str, args: dict):
+    response = client.get(url=path, **args)
+    return {"status_code": response.status_code, "headers": dict(response.headers), "content": response.content}
+
+
+def collect_dataframes_raw(query_config: dict, output_folder: AnyPath, agencies: pandas.DataFrame, timespan: str):
+    agency_sentinel = defaultdict(dict)
+    with ThreadPoolExecutor(max_workers=config("max_threads")) as executor:
+        for agency in agencies.alias.unique():
+            agency_sentinel = {}
+            for query in query_config.get("agency_sentinel", []):
+                agency_sentinel[query["name"]] = executor.submit(
+                    sentinel_to_dataframe, query["kql"], timespan, agencies[agencies.alias == agency].customerId.values
+                )
+            executor.submit(compress_pickle, {k: v.result() for k, v in agency_sentinel.items()}, output_folder / f"{agency}_sentinel.pkl.lzma")
+        global_sentinel = {}
+        for query in query_config.get("global_sentinel", []):
+            global_sentinel[query["name"]] = executor.submit(query_all, query=query["kql"], group_queries=True, fmt=OutputFormat.DF, timespan=timespan)
+        executor.submit(compress_pickle, {k: v.result() for k, v in global_sentinel.items()}, output_folder / "global_sentinel.pkl.lzma")
+        global_https = {}
+        for query in query_config.get("global_https", []):
+            global_https[query["name"]] = executor.submit(external_api, query["api"], query["path"], query.get("args", {}))
+        executor.submit(compress_pickle, {k: v.result() for k, v in global_https.items()}, output_folder / "global_https.pkl.lzma")
+
+
+@router.post("/collect_dataframes")
+def collect_dataframes(
+    tasks: BackgroundTasks, query_config: str = "notebooks/lists/report-queries.json", blobpath: str = "notebooks/query_cache", timespan: str = "P30D"
+):
+    """
+    - Step through config performing per agency and global queries
+    - Queries can either be log analytics or http api calls
+    - Responses are parsed as json and converted to dataframes, then compressed and uploaded to blob storage
+    """
+    query_config = datalake_json(query_config)
+    agencies = list_workspaces(fmt=OutputFormat.DF).rename(columns={"SecOps Group": "alias"})
+    agencies = agencies[["customerId", "alias"]].dropna()
+    output_folder = config("datalake_path") / clean_path(blobpath) / datetime.utcnow().strftime("%Y-%m")
+    if "global_https" in query_config:
+        from .proxy import load_session, httpx_client
+        proxies = load_session()
+        for query in query_config["global_https"]:
+            query["api"] = httpx_client(proxies["session"][f"proxy_{query['api']}"])
+    tasks.add_task(collect_dataframes_raw, query_config, output_folder, agencies, timespan)
+    return {
+        "agencies": agencies.to_dict("records"),
+        "total_queries": agencies.shape[0] * len(query_config.get("agency_sentinel", []))
+        + len(query_config.get("global_sentinel", []))
+        + len(query_config.get("global_https", [])),
+    }
+
+
+@router.post("/export")
 def export(blobpath: str, filenamekeys: str, tasks: BackgroundTasks, query: str = ExampleQuery, timespan: str = "P7D"):
     """
     - Query all workspaces in {config("datalake_path")}/notebooks/lists/SentinelWorkspaces.csv using kusto.
@@ -540,12 +455,12 @@ def data_collector(target_workspace: str = None):
         target_workspace = config("datalake_subscription") + "/" + target_workspace
     subscription, resourcegroup, workspacename = target_workspace.split("/")
     az_workspace = ["--subscription", subscription, "--resource-group", resourcegroup, "--name", workspacename]
-    customerId = azcli(["monitor", "log-analytics", "workspace", "show"] + az_workspace)["customerId"]
-    primarySharedKey = azcli(["monitor", "log-analytics", "workspace", "get-shared-keys"] + az_workspace)["primarySharedKey"]
-    return customerId, primarySharedKey
+    customer_id = azcli(["monitor", "log-analytics", "workspace", "show"] + az_workspace)["customerId"]
+    shared_key = azcli(["monitor", "log-analytics", "workspace", "get-shared-keys"] + az_workspace)["primarySharedKey"]
+    return customer_id, shared_key
 
 
-def upload_loganalytics_raw(rows, customerId, primarySharedKey, log_type):
+def upload_loganalytics_raw(rows, customer_id, shared_key, log_type):
     # Build and send a request to the Log Analytics POST API
     body = json.dumps(rows)  # dump new rows ready for upload
     method, content_type, resource = "POST", "application/json", "/api/logs"
@@ -554,27 +469,27 @@ def upload_loganalytics_raw(rows, customerId, primarySharedKey, log_type):
 
     logger.info(f"Uploading {content_length} bytes to {log_type}_CL")
 
-    signature = build_la_signature(customerId, primarySharedKey, rfc1123date, content_length, method, content_type, resource)
-    uri = "https://" + customerId + ".ods.opinsights.azure.com" + resource + "?api-version=2016-04-01"
+    signature = build_la_signature(customer_id, shared_key, rfc1123date, content_length, method, content_type, resource)
+    uri = "https://" + customer_id + ".ods.opinsights.azure.com" + resource + "?api-version=2016-04-01"
     headers = {"content-type": content_type, "Authorization": signature, "Log-Type": log_type, "x-ms-date": rfc1123date}
 
-    response = requests.post(uri, data=body, headers=headers)
+    response = requests.post(uri, data=body, headers=headers, timeout=120)
     if response.status_code >= 300:
         raise HTTPException(response.status_code, response.text)
 
 
-@api_2.post("/ingest")
+@router.post("/ingest")
 def upload_loganalytics(rows: list[dict], log_type: str, target_workspace: str = None):
     """
     - Uploads a set of records to the {data_collector} workspace into table {log_type}_CL.
     - Deduplicates against similar data for the past 7 days using a sha256 hash of the row.
     - `target_workspace` is optional (will use env if not set), should be configured as {resourcegroup}/{workspacename} (subscription will be inferred from DATALAKE_SUBSCRIPTION)
     """
-    customerId, primarySharedKey = data_collector(target_workspace)
+    customer_id, shared_key = data_collector(target_workspace)
     try:
-        existing_data = analytics_query([customerId], f"{log_type}_CL", "P7D")  # Scan past 7 days for duplicates
-    except Exception as e:
-        logger.warning(e)
+        existing_data = analytics_query([customer_id], f"{log_type}_CL", "P7D")  # Scan past 7 days for duplicates
+    except Exception as exc:
+        logger.warning(exc)
         existing_data = []
     existing_hashes = set()
     digest_column = "_row_sha256"
@@ -595,9 +510,9 @@ def upload_loganalytics(rows: list[dict], log_type: str, target_workspace: str =
         logger.info("Nothing to upload")
         return
     rowsize = len(json.dumps(rows[0]).encode("utf8"))
-    chunkSize = int(20 * 1024 * 1024 / rowsize)  # 20MB max size
-    chunks = [allrows[x : x + chunkSize] for x in range(0, len(allrows), chunkSize)]
+    chunk_size = int(20 * 1024 * 1024 / rowsize)  # 20MB max size
+    chunks = [allrows[x : x + chunk_size] for x in range(0, len(allrows), chunk_size)]
     with ThreadPoolExecutor(max_workers=config("max_threads")) as executor:
         for rows in chunks:
-            executor.submit(upload_loganalytics_raw, rows, customerId, primarySharedKey, log_type)
+            executor.submit(upload_loganalytics_raw, rows, customer_id, shared_key, log_type)
     logger.info(f"Uploaded {len(allrows)} records to {log_type}_CL.")

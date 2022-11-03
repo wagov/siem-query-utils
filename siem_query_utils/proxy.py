@@ -1,33 +1,29 @@
+# pylint: disable=line-too-long
 import base64
-import copy
 import hashlib
-import importlib
 import json
 import logging
 import os
-from secrets import token_urlsafe
 
 import httpx
 import httpx_cache
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse, Response
-from starlette.middleware.sessions import SessionMiddleware
 
 from .api import azcli, cache
 
 logger = logging.getLogger("uvicorn.error")
 
-proxy_1 = FastAPI(title="SIEM Query Utils authenticating proxy for api access", version=importlib.metadata.version(__package__))
-proxy_1.add_middleware(SessionMiddleware, secret_key=token_urlsafe(), session_cookie="fastapi_jupyterlite", same_site="strict")
+router = APIRouter()
 sessions = {}  # global cache of sessions and async clients
 
 
 @cache.memoize(ttl=60 * 60)
 def httpx_client(proxy):
     # cache client objects for an hour
-    client = httpx_cache.Client(**proxy, timeout=None)
-    client.headers["host"] = client.base_url.host
-    return client
+    proxy_client = httpx_cache.Client(**proxy, timeout=None)
+    proxy_client.headers["host"] = proxy_client.base_url.host
+    return proxy_client
 
 
 @cache.memoize(ttl=60 * 60)
@@ -52,7 +48,7 @@ def _session(request: Request, key="session") -> dict:
     return sessions[request.session["key"]][key]
 
 
-default_session = {
+default_session = json.dumps({
     "proxy_httpbin": {
         "base_url": "https://httpbin.org",
         # "params": {"get": "params"},
@@ -61,10 +57,10 @@ default_session = {
     },
     "proxy_jupyter": {"base_url": "https://wagov.github.io/wasoc-jupyterlite"},
     "main_path": "/jupyter/lab/index.html",  # this is redirected to when index is loaded
-}
+})
 
 
-@proxy_1.get("/main_path")
+@router.get("/main_path")
 def main_path(request: Request):
     return RedirectResponse(request.scope.get("root_path") + _session(request)["main_path"])
 
@@ -73,8 +69,8 @@ def encode_session(session: dict):
     return base64.b64encode(json.dumps(session, sort_keys=True).encode("utf8"))
 
 
-@proxy_1.post("/config_base64")
-def config_base64(session: str = encode_session(default_session)):
+@router.post("/config_base64")
+def config_base64(session: str = encode_session(json.loads(default_session))):
     """
     Basic validation for session confi in base64 format, to save place the
     `base64` string into the keyvault secret defined with `KEYVAULT_SESSION_SECRET`
@@ -82,8 +78,8 @@ def config_base64(session: str = encode_session(default_session)):
     return load_session(session)
 
 
-@proxy_1.post("/config")
-def config_dict(session: dict = default_session):
+@router.post("/config")
+def config_dict(session: dict = json.loads(default_session)):
     """
     Basic validation for session config in json format, to save place the
     `base64` string into the keyvault secret defined with `KEYVAULT_SESSION_SECRET`
@@ -91,16 +87,17 @@ def config_dict(session: dict = default_session):
     return load_session(encode_session(session))
 
 
-def load_session(data: str, config: dict = default_session):
+def load_session(data: str = None, config: dict = json.loads(default_session)):
     """
     Decode and return a session as a json object and the base64 string for easy editing
     """
-    config = copy.deepcopy(config)  # keep function vars scoped
+    if data is None: # for internal python use only
+        data = boot(os.environ["KEYVAULT_SESSION_SECRET"])
     try:
         config.update(json.loads(base64.b64decode(data)))
-    except Exception as e:
-        logger.warning(e)
-        raise HTTPException(500, "Failed to load session data")
+    except Exception as exc:
+        logger.warning(exc)
+        raise HTTPException(500, "Failed to load session data") from exc
     session = {"session": config, "base64": encode_session(config), "apis": {}}
     session["key"] = hashlib.sha256(session["base64"]).hexdigest()
     for item, data in config.items():
@@ -111,7 +108,7 @@ def load_session(data: str, config: dict = default_session):
     return session
 
 
-@proxy_1.get("/apis")
+@router.get("/apis")
 def apis(request: Request) -> dict:
     # Returns configured origins
     return _session(request, key="apis")
@@ -124,7 +121,7 @@ def client(request: Request, prefix: str):
     return httpx_client(_session(request)[f"proxy_{prefix}"])
 
 
-def filter_headers(headers: dict, filtered_prefixes=["host", "cookie", "x-ms-", "x-arr-", "disguised-host", "referer"]):
+def filter_headers(headers: dict, filtered_prefixes=["host", "cookie", "x-ms-", "x-arr-", "disguised-host", "referer"]): # pylint: disable=dangerous-default-value
     clean_headers = {}
     for key, value in headers.items():
         for prefix in filtered_prefixes:
@@ -140,7 +137,7 @@ async def get_body(request: Request):
     return await request.body()
 
 
-@proxy_1.get("/{prefix}/{path:path}", response_class=Response)
+@router.get("/{prefix}/{path:path}", response_class=Response)
 def upstream(request: Request, prefix: str, path: str, body=Depends(get_body)):
     # Proxies a request to a defined upstream as defined in session
     headers = filter_headers(request.headers)

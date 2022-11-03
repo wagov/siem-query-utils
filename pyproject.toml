@@ -29,6 +29,8 @@ jupyterlab = "^3.5.0"
 jupyter = "^1.0.0"
 python-dotenv = "^0.21.0"
 pylint = "^2.15.5"
+weasyprint = "^57.0"
+openpyxl = "^3.0.10"
 
 [tool.poetry.scripts]
 siem_query_utils = "siem_query_utils:cli"
