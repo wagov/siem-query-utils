@@ -1,7 +1,6 @@
 """
 Proxy API
 """
-# pylint: disable=line-too-long
 import json
 import os
 
@@ -17,7 +16,9 @@ sessions = settings("sessions")  # global cache of sessions and async clients
 
 def _session(request: Request, key="session") -> dict:
     # Create or retrieve a session
-    if not request.session.get("key") or "main_path" not in sessions.get(request.session["key"], {}):
+    if not request.session.get("key") or "main_path" not in sessions.get(
+        request.session["key"], {}
+    ):
         session_data = settings("keyvault_session")
         if "KEYVAULT_SESSION_SECRET" not in os.environ:
             raise HTTPException(403, "KEYVAULT_SESSION_SECRET not available")
@@ -78,19 +79,24 @@ def client(request: Request, prefix: str):
     Return a httpx client for the given prefix from the session config
     """
     if prefix not in apis(request):
-        raise HTTPException(404, f"{prefix} does not have a valid configuration, see /proxy/apis for valid prefixes.")
+        raise HTTPException(
+            404,
+            f"{prefix} does not have a valid configuration, see /proxy/apis for valid prefixes.",
+        )
     return httpx_client(_session(request)[f"proxy_{prefix}"])
 
 
-def filter_headers( # pylint: disable=dangerous-default-value
-    headers: dict, filtered_prefixes=["host", "cookie", "x-ms-", "x-arr-", "disguised-host", "referer"]
+def filter_headers(  # pylint: disable=dangerous-default-value
+    headers: dict,
+    filtered_prefixes=["host", "cookie", "x-ms-", "x-arr-", "disguised-host", "referer"],
 ) -> dict:
     """
     Filter headers to remove sensitive data
 
     Args:
         headers (dict): headers to filter
-        filtered_prefixes (list, optional): prefixes to filter. Defaults to ["host", "cookie", "x-ms-", "x-arr-", "disguised-host", "referer"].
+        filtered_prefixes (list, optional): prefixes to filter. 
+            Defaults to ["host", "cookie", "x-ms-", "x-arr-", "disguised-host", "referer"].
 
     Returns:
         dict: filtered headers
@@ -144,12 +150,21 @@ def upstream(request: Request, prefix: str, path: str, body=Depends(get_body)):
             base_url = f"{upstream_client.base_url}/"
             if origin.headers["location"].startswith(base_url):
                 redir_path = origin.headers["location"].replace(base_url, "", 1)
-                origin.headers["location"] = request.scope.get("root_path") + f"/{prefix}/{redir_path}"
+                origin.headers["location"] = (
+                    request.scope.get("root_path") + f"/{prefix}/{redir_path}"
+                )
             elif origin.headers["location"].startswith("http"):
                 raise HTTPException(403, f"Redirect to {origin.headers['location']} not allowed.")
         response = Response(status_code=origin.status_code)
         response.body = b"".join(origin.iter_raw())
-        strip_output_headers = ["set-cookie", "transfer-encoding", "content-length", "server", "date", "connection"]
+        strip_output_headers = [
+            "set-cookie",
+            "transfer-encoding",
+            "content-length",
+            "server",
+            "date",
+            "connection",
+        ]
         headers = filter_headers(origin.headers, filtered_prefixes=strip_output_headers)
         response.init_headers(headers=headers)
         return response

@@ -22,13 +22,23 @@ from cloudpathlib import AzureBlobClient
 from dotenv import load_dotenv
 from fastapi import HTTPException
 from pathvalidate import sanitize_filepath
+from uvicorn.config import Config
 
 load_dotenv()
+
+
+# Steal uvicorns logger config
 logger = logging.getLogger("uvicorn.error")
+Config(f"{__package__}:app").configure_logging()
+logger.setLevel(os.environ.get("LOG_LEVEL", "INFO"))
+
 cache = Cache(maxsize=25600, ttl=300)
 
 
-app_state = {"logged_in": False, "login_time": datetime.utcnow() - timedelta(days=1)}  # last login 1 day ago to force relogin
+app_state = {
+    "logged_in": False,
+    "login_time": datetime.utcnow() - timedelta(days=1),
+}  # last login 1 day ago to force relogin
 
 
 default_session = json.dumps(
@@ -142,9 +152,14 @@ def bootstrap(_app_state: dict):
         Exception: if essential env vars are not set
     """
     try:
-        prefix, subscription = os.environ["DATALAKE_BLOB_PREFIX"], os.environ["DATALAKE_SUBSCRIPTION"]
+        prefix, subscription = (
+            os.environ["DATALAKE_BLOB_PREFIX"],
+            os.environ["DATALAKE_SUBSCRIPTION"],
+        )
     except Exception as exc:
-        raise Exception("Please set DATALAKE_BLOB_PREFIX and DATALAKE_SUBSCRIPTION env vars") from exc
+        raise Exception(
+            "Please set DATALAKE_BLOB_PREFIX and DATALAKE_SUBSCRIPTION env vars"
+        ) from exc
     account, container = prefix.split("/")[2:]
     _app_state.update(
         {
@@ -152,12 +167,20 @@ def bootstrap(_app_state: dict):
             "datalake_subscription": subscription,
             "datalake_account": account,
             "datalake_container": container,
-            "email_template": Template(importlib.resources.read_text(f"{__package__}.templates", "email-template.html")),
+            "email_template": Template(
+                importlib.resources.read_text(f"{__package__}.templates", "email-template.html")
+            ),
             "datalake_path": get_blob_path(prefix, subscription),
-            "email_footer": os.environ.get("FOOTER_HTML", "Set FOOTER_HTML env var to configure this..."),
+            "email_footer": os.environ.get(
+                "FOOTER_HTML", "Set FOOTER_HTML env var to configure this..."
+            ),
             "max_threads": int(os.environ.get("MAX_THREADS", "20")),
-            "data_collector_connstring": os.environ.get("AZMONITOR_DATA_COLLECTOR"),  # kinda optional
-            "keyvault_session": load_session(boot(os.environ["KEYVAULT_SESSION_SECRET"])) if "KEYVAULT_SESSION_SECRET" in os.environ else None,
+            "data_collector_connstring": os.environ.get(
+                "AZMONITOR_DATA_COLLECTOR"
+            ),  # kinda optional
+            "keyvault_session": load_session(boot(os.environ["KEYVAULT_SESSION_SECRET"]))
+            if "KEYVAULT_SESSION_SECRET" in os.environ
+            else None,
             "sessions": {},
         }
     )
@@ -173,9 +196,14 @@ def login(refresh: bool = False):
     cli = get_default_cli()
     if os.environ.get("IDENTITY_HEADER"):
         if refresh:
-            cli.invoke(["logout", "--only-show-errors", "-o", "json"], out_file=open(os.devnull, "w"))
+            cli.invoke(
+                ["logout", "--only-show-errors", "-o", "json"], out_file=open(os.devnull, "w")
+            )
         # Use managed service identity to login
-        loginstatus = cli.invoke(["login", "--identity", "--only-show-errors", "-o", "json"], out_file=open(os.devnull, "w"))
+        loginstatus = cli.invoke(
+            ["login", "--identity", "--only-show-errors", "-o", "json"],
+            out_file=open(os.devnull, "w"),
+        )
         if cli.result.error:
             # bail as we aren't able to login
             logger.error(cli.result.error)
@@ -219,7 +247,7 @@ def azcli(cmd: list, error_result: Any = None):
     assert settings("logged_in")
     cmd += ["--only-show-errors", "-o", "json"]
     cli = get_default_cli()
-    logger.debug(" ".join(cmd))
+    logger.debug(" ".join(["az"] + cmd).replace("\n", " ").strip()[:160])
     cli.invoke(cmd, out_file=open(os.devnull, "w"))
     if cli.result.error:
         logger.warning(cli.result.error)
@@ -231,7 +259,13 @@ def azcli(cmd: list, error_result: Any = None):
 
 
 @cache.memoize(ttl=60 * 60 * 24)  # cache sas tokens 1 day
-def generatesas(account: str = None, container: str = None, subscription: str = None, permissions="racwdlt", expiry_days=3) -> str:
+def generatesas(
+    account: str = None,
+    container: str = None,
+    subscription: str = None,
+    permissions="racwdlt",
+    expiry_days=3,
+) -> str:
     """
     Generate a SAS token for a storage account
 
@@ -280,5 +314,9 @@ def get_blob_path(url: str, subscription: str = ""):
     account, container = url.split("/")[2:]
     account = account.split(".")[0]
     sas = generatesas(account, container, subscription)
-    blobclient = AzureBlobClient(blob_service_client=BlobServiceClient(account_url=url.replace(f"/{container}", ""), credential=sas))
+    blobclient = AzureBlobClient(
+        blob_service_client=BlobServiceClient(
+            account_url=url.replace(f"/{container}", ""), credential=sas
+        )
+    )
     return blobclient.CloudPath(f"az://{container}")

@@ -19,7 +19,12 @@ app = FastAPI(title="SIEM Query Utils API v2", version=importlib.metadata.versio
 app.include_router(api.router, prefix="/api/v2", tags=["siem_query_utils"])
 app.include_router(sentinel_beautify.router, prefix="/api/v2", tags=["sentinel_beautify"])
 app.include_router(proxy.router, tags=["proxy"])
-app.add_middleware(SessionMiddleware, secret_key=token_urlsafe(), session_cookie="siem_query_utils", same_site="strict")
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=token_urlsafe(),
+    session_cookie="siem_query_utils",
+    same_site="strict",
+)
 
 
 @app.get("/")
@@ -43,9 +48,19 @@ def serve():
     assumes you have already run `az login` and `az account set` to set the correct subscription.
     its recommended to run this behind a reverse proxy like nginx or traefik.
     """
-    background_atlaskit = Popen(["bash", "-l", "-c", "node atlaskit-transformer/main.mjs"], close_fds=True)
+    background_atlaskit = Popen(
+        ["bash", "-l", "-c", "node atlaskit-transformer/main.mjs"], close_fds=True
+    )
     host, port, log_level = "0.0.0.0", 8000, os.environ.get("LOG_LEVEL", "WARNING").lower()
-    uvicorn.run(f"{__package__}:app", port=port, host=host, log_level=log_level, proxy_headers=True, reload=log_level == "debug")
+    uvicorn.run(
+        f"{__package__}:app",
+        port=port,
+        host=host,
+        log_level=log_level,
+        proxy_headers=True,
+        reload=log_level == "debug",
+        workers=os.cpu_count() * 2 + 1,
+    )
     background_atlaskit.kill()
 
 
@@ -56,11 +71,22 @@ def jupyterlab(path: str = "."):
     Args:
         path (str, optional): Path to launch jupyterlab in. Defaults to ".".
     """
-    run(["bash", "-l", "-c", "az login --tenant $TENANT_ID; jupyter lab"], cwd=api.clean_path(os.path.expanduser(path)), check=False)
+    run(
+        ["bash", "-l", "-c", "az login --tenant $TENANT_ID; jupyter lab"],
+        cwd=api.clean_path(os.path.expanduser(path)),
+        check=False,
+    )
 
 
 def cli():
     """
     Entry point for the CLI to launch uvicorn server or jupyterlab
     """
-    Fire({"listWorkspaces": api.list_workspaces, "serve": serve, "jupyterlab": jupyterlab, "atlaskit": atlaskit})
+    Fire(
+        {
+            "listWorkspaces": api.list_workspaces,
+            "serve": serve,
+            "jupyterlab": jupyterlab,
+            "atlaskit": atlaskit,
+        }
+    )

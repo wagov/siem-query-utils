@@ -1,7 +1,6 @@
 """
 Beautify Sentinel query results
 """
-# pylint: disable=line-too-long
 import json
 
 from fastapi import APIRouter
@@ -13,16 +12,27 @@ from .azcli import logger, settings
 
 router = APIRouter()
 
+
 @router.get("/sentinelBeautify")
-def sentinel_beautify(blob_path: str, outputformat: str = "jira", default_status: str = "Onboard: MOU (T0)", default_orgid: int = 2):
+def sentinel_beautify(
+    blob_path: str,
+    outputformat: str = "jira",
+    default_status: str = "Onboard: MOU (T0)",
+    default_orgid: int = 2,
+):
     """
-    Takes a SecurityIncident from sentinel, and retreives related alerts and returns markdown, html and detailed json representation.
+    Takes a SecurityIncident from sentinel, and retreives related alerts and returns
+    markdown, html and detailed json representation.
     """
     valid_prefix = "sentinel_outputs/incidents"
     if not blob_path.startswith(valid_prefix):
         return f"Blob path must start with {valid_prefix}"
     data = datalake_json(blob_path)
-    labels = [f"SIEM_Severity:{data['Severity']}", f"SIEM_Status:{data['Status']}", f"SIEM_Title:{data['Title']}"]
+    labels = [
+        f"SIEM_Severity:{data['Severity']}",
+        f"SIEM_Status:{data['Status']}",
+        f"SIEM_Title:{data['Title']}",
+    ]
     labels += [l["labelName"] for l in json.loads(data["Labels"])]  # copy over labels from incident
     incident_details = [data["Description"], ""]
 
@@ -43,7 +53,9 @@ def sentinel_beautify(blob_path: str, outputformat: str = "jira", default_status
 
     if data.get("ClassificationReason"):
         labels.append(f"SIEM_ClassificationReason:{data['ClassificationReason']}")
-        incident_details.append(f"- **Alert Classification Reason:** {data['ClassificationReason']}")
+        incident_details.append(
+            f"- **Alert Classification Reason:** {data['ClassificationReason']}"
+        )
 
     if data.get("ProviderName"):
         labels.append(f"SIEM_ProviderName:{data['ProviderName']}")
@@ -58,11 +70,16 @@ def sentinel_beautify(blob_path: str, outputformat: str = "jira", default_status
         if data["AdditionalData"].get("tactics"):
             tactics = ",".join(data["AdditionalData"]["tactics"])
             labels.append(f"SIEM_tactics:{tactics}")
-            incident_details.append(f"- **[MITRE ATT&CK Tactics](https://attack.mitre.org/tactics/):** {tactics}")
+            incident_details.append(
+                f"- **[MITRE ATT&CK Tactics](https://attack.mitre.org/tactics/):** {tactics}"
+            )
         if data["AdditionalData"].get("techniques"):
             techniques = ",".join(data["AdditionalData"]["techniques"])
             labels.append(f"SIEM_techniques:{techniques}")
-            incident_details.append(f"- **[MITRE ATT&CK Techniques](https://attack.mitre.org/techniques/):** {techniques}")
+            incident_details.append(
+                "- **[MITRE ATT&CK Techniques](https://attack.mitre.org/techniques/):**"
+                f" {techniques}"
+            )
 
     comments = []
     if data.get("Comments"):
@@ -94,29 +111,42 @@ def sentinel_beautify(blob_path: str, outputformat: str = "jira", default_status
         Args:
             dict
         """
+
         def __missing__(self, key):
             return key
 
     if data.get("AlertIds") and settings("datalake_blob_prefix"):
         data["AlertIds"] = json.loads(data["AlertIds"])
-        alertdata = []
+        alertprefix, alertdata = "sentinel_outputs/alerts", []
         for alertid in reversed(data["AlertIds"]):  # walk alerts from newest to oldest, max 10
             # below should be able to find all the alerts from the latest day of activity
             try:
-                url = f"sentinel_outputs/alerts/{data['LastActivityTime'].split('T')[0]}/{data['TenantId']}_{alertid}.json"
+                url = f"{alertprefix}/{data['LastActivityTime'].split('T')[0]}/{data['TenantId']}_{alertid}.json"
                 alert = datalake_json(url)
-            except Exception as exc: # pylint: disable=broad-except
+            except Exception as exc:  # pylint: disable=broad-except
                 # alert may not exist on day of last activity time
                 logger.warning(exc)
                 break
             else:
                 if not alert_details:
-                    alert_details += ["", "## Alert Details", "The last day of activity (up to 20 alerts) is summarised below from newest to oldest."]
+                    alert_details += [
+                        "",
+                        "## Alert Details",
+                        (
+                            "The last day of activity (up to 20 alerts) is summarised below from"
+                            " newest to oldest."
+                        ),
+                    ]
                 alert_details.append(
-                    f"### [{alert['AlertName']} (Severity:{alert['AlertSeverity']}) - TimeGenerated {alert['TimeGenerated']}]({alert['AlertLink']})"
+                    f"### [{alert['AlertName']} (Severity:{alert['AlertSeverity']}) - "
+                    + f"TimeGenerated {alert['TimeGenerated']}]({alert['AlertLink']})"
                 )
                 alert_details.append(alert["Description"])
-                for key in ["RemediationSteps", "ExtendedProperties", "Entities"]:  # entities last as may get truncated
+                for key in [
+                    "RemediationSteps",
+                    "ExtendedProperties",
+                    "Entities",
+                ]:  # entities last as may get truncated
                     if alert.get(key):
                         alert[key] = json.loads(alert[key])
                         if key == "Entities":  # add the entity to our list of observables
@@ -124,14 +154,24 @@ def sentinel_beautify(blob_path: str, outputformat: str = "jira", default_status
                                 if "Type" in entity:
                                     observable = {
                                         "type": entity["Type"],
-                                        "value": entity_type_value_mappings.get(entity["Type"], "").format_map(Default(entity)),
+                                        "value": entity_type_value_mappings.get(
+                                            entity["Type"], ""
+                                        ).format_map(Default(entity)),
                                     }
-                                if not observable["value"]:  # dump whole dict as string if no mapping found
+                                if not observable[
+                                    "value"
+                                ]:  # dump whole dict as string if no mapping found
                                     observable["value"] = repr(entity)
                                 observables.append(observable)
-                        if alert[key] and isinstance(alert[key], list) and isinstance(alert[key][0], dict):
+                        if (
+                            alert[key]
+                            and isinstance(alert[key], list)
+                            and isinstance(alert[key][0], dict)
+                        ):
                             # if list of dicts, make a table
-                            for index, entry in enumerate([flatten(item) for item in alert[key] if len(item.keys()) > 1]):
+                            for index, entry in enumerate(
+                                [flatten(item) for item in alert[key] if len(item.keys()) > 1]
+                            ):
                                 alert_details += ["", f"#### {key}.{index}"]
                                 for entrykey, value in entry.items():
                                     if value:
@@ -142,7 +182,14 @@ def sentinel_beautify(blob_path: str, outputformat: str = "jira", default_status
                                 if value and len(value) < 200:
                                     alert_details.append(f"- **{entrykey}:** {value}")
                                 elif value:  # break out long blocks
-                                    alert_details += [f"- **{entrykey}:**", "", "```", value, "```", ""]
+                                    alert_details += [
+                                        f"- **{entrykey}:**",
+                                        "",
+                                        "```",
+                                        value,
+                                        "```",
+                                        "",
+                                    ]
                         else:  # otherwise just add as separate lines
                             alert_details += ["", f"#### {key}"] + [item for item in alert[key]]
                 alertdata.append(alert)
@@ -151,7 +198,10 @@ def sentinel_beautify(blob_path: str, outputformat: str = "jira", default_status
                     break
         data["AlertData"] = alertdata
 
-    title = f"SIEM Detection #{data['IncidentNumber']} Sev:{data['Severity']} - {data['Title']} (Status:{data['Status']})"
+    title = (
+        f"SIEM Detection #{data['IncidentNumber']} Sev:{data['Severity']} -"
+        f" {data['Title']} (Status:{data['Status']})"
+    )
     mdtext = (
         [
             f"# {title}",
@@ -165,7 +215,9 @@ def sentinel_beautify(blob_path: str, outputformat: str = "jira", default_status
     )
     mdtext = "\n".join([str(line) for line in mdtext])
     content = markdown(mdtext, extensions=["tables"])
-    html = settings("email_template").substitute(title=title, content=content, footer=settings("email_footer"))
+    html = settings("email_template").substitute(
+        title=title, content=content, footer=settings("email_footer")
+    )
     # remove special chars and deduplicate labels
     labels = set("".join(c for c in label if c.isalnum() or c in ".:_") for label in labels)
 
@@ -177,7 +229,11 @@ def sentinel_beautify(blob_path: str, outputformat: str = "jira", default_status
     }
     if outputformat == "jira":
         workspaces_df = list_workspaces(OutputFormat.DF)
-        customer = workspaces_df[workspaces_df["customerId"] == data["TenantId"]].fillna("").to_dict("records")
+        customer = (
+            workspaces_df[workspaces_df["customerId"] == data["TenantId"]]
+            .fillna("")
+            .to_dict("records")
+        )
         if len(customer) > 0:
             customer = customer[0]
         else:
@@ -188,7 +244,9 @@ def sentinel_beautify(blob_path: str, outputformat: str = "jira", default_status
                 "secops_status": customer.get("SecOps Status") or default_status,
                 "jira_orgid": customer.get("JiraOrgId") or default_orgid,
                 "customer": customer,
-                "wikimarkup": atlaskit_client().post("/md/to/wiki", content=mdtext, headers={"content-type": "text/plain"}).content[:32760],
+                "wikimarkup": atlaskit_client()
+                .post("/md/to/wiki", content=mdtext, headers={"content-type": "text/plain"})
+                .content[:32760],
             }
         )
     else:

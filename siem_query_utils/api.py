@@ -1,7 +1,6 @@
 """
 Main api endpoints to be added to a fastapi app
 """
-# pylint: disable=logging-fstring-interpolation, unspecified-encoding, line-too-long
 import base64
 import hashlib
 import hmac
@@ -9,7 +8,7 @@ import importlib
 import json
 import os
 from collections import defaultdict, namedtuple
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import datetime
 from enum import Enum
 from mimetypes import guess_type
@@ -53,7 +52,7 @@ def datalake(path: str):
     """
     path = settings("datalake_path") / clean_path(path)
     if not path.exists():
-        logger.warning(path)
+        logger.warning(f"datalake {path} not found")
         raise HTTPException(404, f"{path} not found")
     return StreamingResponse(content=path.open(), media_type=guess_type(path.name)[0])
 
@@ -65,7 +64,8 @@ def datalake_json(path: str, content=None, modified_key: Optional[str] = None) -
     Args:
         path (str): Path to read or write.
         content (_type_, optional): Content to write. Defaults to None.
-        modified_key (Optional[str], optional): Key to use for comparing the modified time. Defaults to None.
+        modified_key (Optional[str], optional): Key to use for comparing the modified time.
+            Defaults to None.
 
     Returns:
         dict: The json content.
@@ -76,7 +76,9 @@ def datalake_json(path: str, content=None, modified_key: Optional[str] = None) -
         return json.loads(path.read_text())
     elif modified_key and modified_key in content and path.exists():
         # Contrast the actual blob content for its modified time
-        source_mtime, dest_mtime = isoparse(content[modified_key]), isoparse(json.load(path.open())[modified_key])
+        source_mtime, dest_mtime = isoparse(content[modified_key]), isoparse(
+            json.load(path.open())[modified_key]
+        )
         if source_mtime >= dest_mtime:
             return content
     logger.debug(f"Uploading {path}.")
@@ -85,6 +87,7 @@ def datalake_json(path: str, content=None, modified_key: Optional[str] = None) -
 
 
 @router.get("/loadkql", response_class=PlainTextResponse)
+@cache.memoize()
 def load_kql(query: str) -> str:
     """
     - If query starts with kql/ then load it from a package resource and return text
@@ -92,21 +95,32 @@ def load_kql(query: str) -> str:
     """
     if query.startswith("kql/"):
         path = Path(__package__) / Path(clean_path(query))
-        query = importlib.resources.read_text(package=str(path.parent).replace("/", "."), resource=path.name).strip()
+        logger.debug(f"loading kql from {path}")
+        query = importlib.resources.read_text(
+            package=str(path.parent).replace("/", "."), resource=path.name
+        ).strip()
     # If query starts with kql:// then load it from KQL_BASEURL
     elif query.startswith("kql://"):
         base_url = os.environ["KQL_BASEURL"]
         path = clean_path(query.replace("kql://", "", 1))
         url = f"{base_url}/{path}"
+        logger.debug(f"loading kql from {url}")
         query = requests.get(url, timeout=10).text.strip()
-    logger.debug(f"KQL Query:\n{query}")
     return query
 
 
-def analytics_query(workspaces: list, query: str, timespan: str = "P7D", group_queries=True):
+def analytics_query(workspaces: list[str], query: str, timespan: str = "P7D", group_queries=True):
     "Queries a list of workspaces using kusto"
     query = load_kql(query)
-    cmd_base = ["monitor", "log-analytics", "query", "--analytics-query", query, "--timespan", timespan]
+    cmd_base = [
+        "monitor",
+        "log-analytics",
+        "query",
+        "--analytics-query",
+        query,
+        "--timespan",
+        timespan,
+    ]
     if group_queries or len(workspaces) == 1:
         cmd = cmd_base + ["--workspace", workspaces[0]]
         if len(workspaces) > 1:
@@ -114,12 +128,16 @@ def analytics_query(workspaces: list, query: str, timespan: str = "P7D", group_q
         try:
             return azcli(cmd, error_result="raise")  # big grouped query
         except Exception as exc:  # pylint: disable=broad-except
-            logger.warning(exc)
-            logger.warning("falling back to individual queries")
+            logger.warning(f"{exc}: falling back to individual queries")
     # run each query separately and stitch results, 20 at a time.
     results = []
     with ThreadPoolExecutor(max_workers=settings("max_threads")) as executor:
-        futures = {workspace: executor.submit(azcli, cmd_base + ["--workspace", workspace], error_result=[]) for workspace in workspaces}
+        futures = {
+            workspace: executor.submit(
+                azcli, cmd_base + ["--workspace", workspace], error_result=[]
+            )
+            for workspace in workspaces
+        }
         for workspace, future in futures.items():
             result = future.result()
             for item in result:
@@ -133,8 +151,14 @@ def analytics_query(workspaces: list, query: str, timespan: str = "P7D", group_q
 def list_workspaces(fmt: OutputFormat = OutputFormat.LIST):
     "Get sentinel workspaces from {datalake}/notebooks/lists/SentinelWorkspaces.csv"
     # return workspaces dataframe from the datalake
-    dataframe = pandas.read_csv((settings("datalake_path") / "notebooks/lists/SentinelWorkspaces.csv").open()).join(
-        pandas.read_csv((settings("datalake_path") / "notebooks/lists/SecOps Groups.csv").open()).set_index("Alias"), on="SecOps Group", rsuffix="_secops"
+    dataframe = pandas.read_csv(
+        (settings("datalake_path") / "notebooks/lists/SentinelWorkspaces.csv").open()
+    ).join(
+        pandas.read_csv(
+            (settings("datalake_path") / "notebooks/lists/SecOps Groups.csv").open()
+        ).set_index("Alias"),
+        on="SecOps Group",
+        rsuffix="_secops",
     )
     if fmt == OutputFormat.LIST:
         return list(dataframe.customerId.dropna())
@@ -147,13 +171,18 @@ def list_workspaces(fmt: OutputFormat = OutputFormat.LIST):
 
 
 def upload_results(results, blobdest, filenamekeys):
-    "Uploads a list of json results as individual files split by timegenerated to a blob destination"
+    "Uploads a list of json results as files split by timegenerated to a blob destination"
     blobdest = clean_path(blobdest)
     with ThreadPoolExecutor(max_workers=settings("max_threads")) as executor:
         for result in results:
             dirname = f"{result['TimeGenerated'].split('T')[0]}"
             filename = "_".join([result[key] for key in filenamekeys.split(",")]) + ".json"
-            executor.submit(datalake_json, path=f"{blobdest}/{dirname}/{filename}", content=result, modified_key="TimeGenerated")
+            executor.submit(
+                datalake_json,
+                path=f"{blobdest}/{dirname}/{filename}",
+                content=result,
+                modified_key="TimeGenerated",
+            )
     logger.debug(f"Uploaded {len(results)} results.")
 
 
@@ -175,15 +204,32 @@ class AtlaskitFmt(str, Enum):
 
 
 @router.post("/atlaskit/{input}/to/{output}")
-def atlaskit(request: Request, srcfmt: AtlaskitFmt, destfmt: AtlaskitFmt, body=Body("# Test Header", media_type="text/plain")):
+def atlaskit(
+    request: Request,
+    srcfmt: AtlaskitFmt,
+    destfmt: AtlaskitFmt,
+    body=Body("# Test Header", media_type="text/plain"),
+):
     """
     Converts between atlaskit formats using js modules.
     """
-    origin = atlaskit_client().post(f"/{srcfmt}/to/{destfmt}", content=body, headers={"content-type": request.headers["content-type"]})
+    origin = atlaskit_client().post(
+        f"/{srcfmt}/to/{destfmt}",
+        content=body,
+        headers={"content-type": request.headers["content-type"]},
+    )
     return Response(status_code=origin.status_code, content=origin.content)
 
 
-def build_la_signature(customer_id: str, shared_key: str, date: str, content_length: int, method: str, content_type: str, resource) -> str:
+def build_la_signature(
+    customer_id: str,
+    shared_key: str,
+    date: str,
+    content_length: int,
+    method: str,
+    content_type: str,
+    resource,
+) -> str:
     """
     Build the signature string for the Log Analytics Data Collector API.
 
@@ -200,10 +246,22 @@ def build_la_signature(customer_id: str, shared_key: str, date: str, content_len
         str: The signature string.
     """
     x_headers = "x-ms-date:" + date
-    string_to_hash = method + "\n" + str(content_length) + "\n" + content_type + "\n" + x_headers + "\n" + resource
+    string_to_hash = (
+        method
+        + "\n"
+        + str(content_length)
+        + "\n"
+        + content_type
+        + "\n"
+        + x_headers
+        + "\n"
+        + resource
+    )
     bytes_to_hash = bytes(string_to_hash, encoding="utf-8")
     decoded_key = base64.b64decode(shared_key)
-    encoded_hash = base64.b64encode(hmac.new(decoded_key, bytes_to_hash, digestmod=hashlib.sha256).digest()).decode()
+    encoded_hash = base64.b64encode(
+        hmac.new(decoded_key, bytes_to_hash, digestmod=hashlib.sha256).digest()
+    ).decode()
     authorization = f"SharedKey {customer_id}:{encoded_hash}"
     return authorization
 
@@ -219,7 +277,12 @@ SecurityIncident
 
 @router.get("/query")
 @router.post("/query")
-def query_all(query: str = ExampleQuery, group_queries: bool = True, timespan: str = "P7D", fmt: OutputFormat = OutputFormat.JSON):
+def query_all(
+    query: str = ExampleQuery,
+    group_queries: bool = True,
+    timespan: str = "P7D",
+    fmt: OutputFormat = OutputFormat.JSON,
+):
     """
     Query all workspaces from `/listWorkspaces` using kusto.
     """
@@ -233,12 +296,20 @@ def query_all(query: str = ExampleQuery, group_queries: bool = True, timespan: s
 
 
 @router.post("/collect")
-def collect(table: str, tasks: BackgroundTasks, query: str = ExampleQuery, timespan: str = "P7D", target_workspace: str = None):
+def collect(
+    table: str,
+    tasks: BackgroundTasks,
+    query: str = ExampleQuery,
+    timespan: str = "P7D",
+    target_workspace: str = None,
+):
     """
     - Query all workspaces from `/listWorkspaces` using kusto.
     - Collects query results into a central {table}.
-    - Note that due to ingestion lag past 7 day deduplication may fail for the first few runs if run at intervals of less than 15 minutes.
-    - `target_workspace` is optional (will use env if not set), should be configured as {resourcegroup}/{workspacename} (subscription will be inferred from DATALAKE_SUBSCRIPTION)
+    - Note that due to ingestion lag past 7 day deduplication may fail for the first few runs
+      if run at intervals of less than 15 minutes.
+    - `target_workspace` is optional (will use env if not set), should be configured as
+      {resourcegroup}/{workspacename} (subscription will be inferred from DATALAKE_SUBSCRIPTION)
     """
     results = analytics_query(list_workspaces(), query, timespan)
     tasks.add_task(upload_loganalytics, results, table, target_workspace)
@@ -269,11 +340,17 @@ def save_dataframes(obj: dict[pandas.DataFrame], path: AnyPath):
     """
     logger.debug(f"Compressing {path}")
     mem_zip = io.BytesIO()
-    with zipfile.ZipFile(mem_zip, "w", compression="lzma") as mem_zipfile:
+    with zipfile.ZipFile(mem_zip, "w", compression=zipfile.ZIP_DEFLATED) as mem_zipfile:
         for name, dataframe in obj.items():
-            with mem_zipfile.open(f"{name}.csv", "w") as f:
-                f.write(dataframe.to_csv().encode("utf8"))
+            if not isinstance(dataframe, pandas.DataFrame):  # handle futures
+                dataframe = dataframe.result()
+            dataframe = dataframe.loc[:, dataframe.nunique() > 1]  # throw out invariant columns
+            with mem_zipfile.open(
+                zipfile.ZipInfo(f"{name}.csv", date_time=datetime.now().timetuple()), "w"
+            ) as csv_file:
+                csv_file.write(dataframe.to_csv(index=False).encode("utf8"))
     path.write_bytes(mem_zip.getvalue())
+    return mem_zip.getbuffer().nbytes
 
 
 def load_dataframes(path: AnyPath) -> dict[pandas.DataFrame]:
@@ -298,47 +375,82 @@ def load_dataframes(path: AnyPath) -> dict[pandas.DataFrame]:
     return obj
 
 
-def sentinel_to_dataframe(kql: str, timespan: str, workspaces: list[str]):
-    # Load or directly query kql against workspaces
-    # Parse results as json and return as a dataframe
+def kql2df(kql: str, timespan: str, workspaces: list[str]) -> pandas.DataFrame:
+    """
+    Load data from Sentinel into a dataframe.
+
+    Args:
+        kql (str): Kusto query to run.
+        timespan (str): Timespan to query.
+        workspaces (list[str]): List of workspaces to query.
+
+    Returns:
+        pandas.DataFrame: Dataframe of results.
+    """
     table = kql.split("\n")[0].split(" ")[0].strip()
     try:
         data = analytics_query(workspaces=workspaces, query=kql, timespan=timespan)
         assert (len(data)) > 0
     except Exception as exc:  # pylint: disable=broad-except
-        logger.warning(exc)
+        logger.warning(f"{exc}: No data for {table} in {workspaces}")
         data = [{f"{table}": f"No Data in timespan {timespan}"}]
     return pandas.DataFrame.from_records(data)
 
 
 def external_api(client, path: str, args: dict):
     response = client.get(url=path, **args)
-    return {"status_code": response.status_code, "headers": dict(response.headers), "content": response.content}
+    return {
+        "status_code": response.status_code,
+        "headers": dict(response.headers),
+        "content": response.content,
+    }
 
 
-def report_csvs_raw(query_config: dict, output_folder: AnyPath, agencies: pandas.DataFrame, timespan: str):
-    agency_sentinel = defaultdict(dict)
+def report_csvs_raw(query_config: dict, path: AnyPath, agencies: pandas.DataFrame, timespan: str):
+    """
+    Run a set of queries and save the results to a collection of zip files.
+
+    Args:
+        query_config (dict): Dictionary of queries to run.
+        path (AnyPath): Path to save zip files to.
+        agencies (pandas.DataFrame): Dataframe of agencies to query.
+        timespan (str): Timespan to query.
+
+    Raises:
+        csv.exception: If there is an error uploading to blob storage.
+    """
     with ThreadPoolExecutor(max_workers=settings("max_threads")) as executor:
+        csvs = []
         for agency in agencies.alias.unique():
-            agency_sentinel = {}
+            dfs = {}
             for query in query_config.get("agency_sentinel", []):
-                agency_sentinel[query["name"]] = executor.submit(
-                    sentinel_to_dataframe, query["kql"], timespan, agencies[agencies.alias == agency].customerId.values
-                )
-            executor.submit(save_dataframes, {k: v.result() for k, v in agency_sentinel.items()}, output_folder / f"{agency}_sentinel.zip")
-        global_sentinel = {}
+                workspaces = list(agencies[agencies.alias == agency].customerId.values)
+                dfs[query["name"]] = executor.submit(kql2df, query["kql"], timespan, workspaces)
+            csvs.append(executor.submit(save_dataframes, dfs, path / f"{agency}_sentinel.zip"))
+        dfs = {}
         for query in query_config.get("global_sentinel", []):
-            global_sentinel[query["name"]] = executor.submit(sentinel_to_dataframe, query["kql"], timespan, agencies.customerId.unique().values)
-        executor.submit(save_dataframes, {k: v.result() for k, v in global_sentinel.items()}, output_folder / "global_sentinel.zip")
+            workspaces = list_workspaces(OutputFormat.LIST)
+            dfs[query["name"]] = executor.submit(kql2df, query["kql"], timespan, workspaces)
+        csvs.append(executor.submit(save_dataframes, dfs, path / "global_sentinel.zip"))
         global_https = {}
         for query in query_config.get("global_https", []):
-            global_https[query["name"]] = executor.submit(external_api, query["api"], query["path"], query.get("args", {}))
-        executor.submit(save_dataframes, {k: v.result() for k, v in global_https.items()}, output_folder / "global_https.zip")
+            global_https[query["name"]] = executor.submit(
+                external_api, query["api"], query["path"], query.get("args", {})
+            )
+        csvs.append(executor.submit(save_dataframes, global_https, path / "global_https.zip"))
+        wait(csvs)
+        for csv in csvs:
+            if csv.exception():
+                raise csv.exception()
 
 
 @router.post("/collect_report_csvs")
 def collect_report_csvs(
-    tasks: BackgroundTasks, query_config: str = "notebooks/lists/report-queries.json", blobpath: str = "notebooks/query_cache", timespan: str = "P30D"
+    tasks: BackgroundTasks,
+    query_config: str = "notebooks/lists/report-queries.json",
+    blobpath: str = "notebooks/query_cache",
+    timespan: str = "P30D",
+    limit: int = None,
 ):
     """
     - Step through config performing per agency and global queries
@@ -347,11 +459,13 @@ def collect_report_csvs(
     """
     query_config = datalake_json(query_config)
     agencies = list_workspaces(fmt=OutputFormat.DF).rename(columns={"SecOps Group": "alias"})
-    agencies = agencies[["customerId", "alias"]].dropna()
-    output_folder = settings("datalake_path") / clean_path(blobpath) / datetime.utcnow().strftime("%Y-%m")
+    agencies = agencies[["customerId", "alias"]].dropna()[:limit]
+    output_path = (
+        settings("datalake_path") / clean_path(blobpath) / datetime.utcnow().strftime("%Y-%m")
+    )
     for query in query_config.get("global_https", []):
         query["api"] = httpx_client(settings("keyvault_session")[f"proxy_{query['api']}"])
-    tasks.add_task(report_csvs_raw, query_config, output_folder, agencies, timespan)
+    tasks.add_task(report_csvs_raw, query_config, output_path, agencies, timespan)
     return {
         "agencies": agencies.to_dict("records"),
         "total_queries": agencies.shape[0] * len(query_config.get("agency_sentinel", []))
@@ -361,7 +475,13 @@ def collect_report_csvs(
 
 
 @router.post("/export")
-def export(blobpath: str, filenamekeys: str, tasks: BackgroundTasks, query: str = ExampleQuery, timespan: str = "P7D"):
+def export(
+    blobpath: str,
+    filenamekeys: str,
+    tasks: BackgroundTasks,
+    query: str = ExampleQuery,
+    timespan: str = "P7D",
+):
     """
     - Query all workspaces in {config("datalake_path")}/notebooks/lists/SentinelWorkspaces.csv using kusto.
     - Save results to {config("datalake_path")}/{blobpath}/{date}/{filename}.json
@@ -380,9 +500,20 @@ def data_collector(target_workspace: str = None):
     else:
         target_workspace = settings("datalake_subscription") + "/" + target_workspace
     subscription, resourcegroup, workspacename = target_workspace.split("/")
-    az_workspace = ["--subscription", subscription, "--resource-group", resourcegroup, "--name", workspacename]
-    customer_id = azcli(["monitor", "log-analytics", "workspace", "show"] + az_workspace)["customerId"]
-    shared_key = azcli(["monitor", "log-analytics", "workspace", "get-shared-keys"] + az_workspace)["primarySharedKey"]
+    az_workspace = [
+        "--subscription",
+        subscription,
+        "--resource-group",
+        resourcegroup,
+        "--name",
+        workspacename,
+    ]
+    customer_id = azcli(["monitor", "log-analytics", "workspace", "show"] + az_workspace)[
+        "customerId"
+    ]
+    shared_key = azcli(["monitor", "log-analytics", "workspace", "get-shared-keys"] + az_workspace)[
+        "primarySharedKey"
+    ]
     return customer_id, shared_key
 
 
@@ -395,9 +526,22 @@ def upload_loganalytics_raw(rows, customer_id, shared_key, log_type):
 
     logger.info(f"Uploading {content_length} bytes to {log_type}_CL")
 
-    signature = build_la_signature(customer_id, shared_key, rfc1123date, content_length, method, content_type, resource)
-    uri = "https://" + customer_id + ".ods.opinsights.azure.com" + resource + "?api-version=2016-04-01"
-    headers = {"content-type": content_type, "Authorization": signature, "Log-Type": log_type, "x-ms-date": rfc1123date}
+    signature = build_la_signature(
+        customer_id, shared_key, rfc1123date, content_length, method, content_type, resource
+    )
+    uri = (
+        "https://"
+        + customer_id
+        + ".ods.opinsights.azure.com"
+        + resource
+        + "?api-version=2016-04-01"
+    )
+    headers = {
+        "content-type": content_type,
+        "Authorization": signature,
+        "Log-Type": log_type,
+        "x-ms-date": rfc1123date,
+    }
 
     response = requests.post(uri, data=body, headers=headers, timeout=120)
     if response.status_code >= 300:
@@ -413,9 +557,14 @@ def upload_loganalytics(rows: list[dict], log_type: str, target_workspace: str =
     """
     customer_id, shared_key = data_collector(target_workspace)
     try:
-        existing_data = analytics_query([customer_id], f"{log_type}_CL", "P7D")  # Scan past 7 days for duplicates
+        existing_data = analytics_query(
+            [customer_id], f"{log_type}_CL", "P7D"
+        )  # Scan past 7 days for duplicates
     except Exception as exc:  # pylint: disable=broad-except
-        logger.warning(exc)
+        logger.warning(
+            f"{exc}: existing table {log_type}_CL not found in {customer_id} workspace, skipping"
+            " deduplication"
+        )
         existing_data = []  # If we can't query, assume no duplicates
     existing_hashes = set()
     digest_column = "_row_sha256"
