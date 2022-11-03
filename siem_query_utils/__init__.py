@@ -1,3 +1,6 @@
+"""
+Main entry point for the CLI and uvicorn server
+"""
 # pylint: disable=line-too-long
 import importlib
 import os
@@ -13,7 +16,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from . import api, proxy, sentinel_beautify
 
 app = FastAPI(title="SIEM Query Utils API v2", version=importlib.metadata.version(__package__))
-app.include_router(api.router, prefix="/api/v2", tags=["siemqueryutils"])
+app.include_router(api.router, prefix="/api/v2", tags=["siem_query_utils"])
 app.include_router(sentinel_beautify.router, prefix="/api/v2", tags=["sentinel_beautify"])
 app.include_router(proxy.router, tags=["proxy"])
 app.add_middleware(SessionMiddleware, secret_key=token_urlsafe(), session_cookie="siem_query_utils", same_site="strict")
@@ -28,25 +31,36 @@ def index():
 
 
 def atlaskit():
-    # launch node helper on port 3000 (handle running in a non interactive session for nvm/node access)
+    """
+    launch node helper on port 3000 (handle running in a non interactive session for nvm/node access).
+    """
     run(["bash", "-l", "-c", "node atlaskit-transformer/main.mjs"], check=False)
 
 
 def serve():
-    # launch background node helper on port 3000 (handle running in a non interactive session for nvm/node access)
+    """
+    launch uvicorn server on port 8000 and node helper on port 3000 (handle running in a non interactive session for nvm/node access).
+    assumes you have already run `az login` and `az account set` to set the correct subscription.
+    its recommended to run this behind a reverse proxy like nginx or traefik.
+    """
     background_atlaskit = Popen(["bash", "-l", "-c", "node atlaskit-transformer/main.mjs"], close_fds=True)
-    # serve on port 8000, assume running behind a trusted reverse proxy
-    host, port = "0.0.0.0", 8000
-    # Launch main uvicor server
-    uvicorn.run(app, port=port, host=host, log_level=os.environ.get("LOG_LEVEL", "WARNING").lower(), proxy_headers=True)
-    # Clean up node helper
+    host, port, log_level = "0.0.0.0", 8000, os.environ.get("LOG_LEVEL", "WARNING").lower()
+    uvicorn.run(f"{__package__}:app", port=port, host=host, log_level=log_level, proxy_headers=True, reload=log_level == "debug")
     background_atlaskit.kill()
 
 
 def jupyterlab(path: str = "."):
-    # Launch jupyterlab server (default to current dir as path)
+    """
+    Launch jupyterlab in the current directory
+
+    Args:
+        path (str, optional): Path to launch jupyterlab in. Defaults to ".".
+    """
     run(["bash", "-l", "-c", "az login --tenant $TENANT_ID; jupyter lab"], cwd=api.clean_path(os.path.expanduser(path)), check=False)
 
 
 def cli():
+    """
+    Entry point for the CLI to launch uvicorn server or jupyterlab
+    """
     Fire({"listWorkspaces": api.list_workspaces, "serve": serve, "jupyterlab": jupyterlab, "atlaskit": atlaskit})

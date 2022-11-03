@@ -1,12 +1,8 @@
 # pylint: disable=line-too-long
 import hashlib
 import importlib
-import json
-import lzma
 import pickle
 import tempfile
-from concurrent.futures import Future, ThreadPoolExecutor, wait
-from copy import deepcopy
 from pathlib import Path
 from string import Template
 from typing import Union
@@ -19,7 +15,7 @@ from cloudpathlib import AnyPath
 from IPython import display
 from pathvalidate import sanitize_filepath
 
-from .api import OutputFormat, analytics_query, config, list_workspaces, cache, router, logger
+from .api import settings, list_workspaces
 
 
 class EspartoReport:
@@ -45,7 +41,7 @@ class EspartoReport:
               `--*/*/*.pdf
         """
         if not path:
-            path = config("datalake_path")
+            path = settings("datalake_path")
         self.pdf_css_file = tempfile.NamedTemporaryFile(delete=False, mode="w+t", suffix=".css")
         self.timespan, self.path, self.nbpath = timespan, path, path / sanitize_filepath(subfolder)
         self.kql, self.lists, self.reports = self.nbpath / "kql", self.nbpath / "lists", self.nbpath / "reports"

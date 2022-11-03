@@ -1,11 +1,15 @@
+"""
+Beautify Sentinel query results
+"""
+# pylint: disable=line-too-long
 import json
 
+from fastapi import APIRouter
 from flatten_json import flatten
 from markdown import markdown
-from fastapi import APIRouter
 
-from .api import (OutputFormat, atlaskit_client, config, datalake_json,
-                  list_workspaces, logger)
+from .api import OutputFormat, atlaskit_client, datalake_json, list_workspaces
+from .azcli import logger, settings
 
 router = APIRouter()
 
@@ -84,10 +88,16 @@ def sentinel_beautify(blob_path: str, outputformat: str = "jira", default_status
     }
 
     class Default(dict):
+        """
+        Default dict that returns the key if the key is not found
+
+        Args:
+            dict
+        """
         def __missing__(self, key):
             return key
 
-    if data.get("AlertIds") and config("datalake_blob_prefix"):
+    if data.get("AlertIds") and settings("datalake_blob_prefix"):
         data["AlertIds"] = json.loads(data["AlertIds"])
         alertdata = []
         for alertid in reversed(data["AlertIds"]):  # walk alerts from newest to oldest, max 10
@@ -95,7 +105,8 @@ def sentinel_beautify(blob_path: str, outputformat: str = "jira", default_status
             try:
                 url = f"sentinel_outputs/alerts/{data['LastActivityTime'].split('T')[0]}/{data['TenantId']}_{alertid}.json"
                 alert = datalake_json(url)
-            except Exception as exc:  # alert may not exist on day of last activity time
+            except Exception as exc: # pylint: disable=broad-except
+                # alert may not exist on day of last activity time
                 logger.warning(exc)
                 break
             else:
@@ -154,7 +165,7 @@ def sentinel_beautify(blob_path: str, outputformat: str = "jira", default_status
     )
     mdtext = "\n".join([str(line) for line in mdtext])
     content = markdown(mdtext, extensions=["tables"])
-    html = config("email_template").substitute(title=title, content=content, footer=config("email_footer"))
+    html = settings("email_template").substitute(title=title, content=content, footer=settings("email_footer"))
     # remove special chars and deduplicate labels
     labels = set("".join(c for c in label if c.isalnum() or c in ".:_") for label in labels)
 
