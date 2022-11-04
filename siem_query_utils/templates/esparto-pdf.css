@@ -42,7 +42,7 @@ a {
 }
 @page {
     size: A4 portrait;
-    font-family: $font;
+    font-family: Helvetica, Arial, sans-serif;
     margin: 1.5cm 1cm;
     margin-top: 2cm;
     @bottom-right {
