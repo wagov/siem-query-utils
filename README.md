@@ -26,6 +26,15 @@ az login --tenant $TENANT_ID
 poetry run siem_query_utils serve
 ```
 
+If you are using github codespaces, quickstart below:
+
+```bash
+# Jupyter lab in project
+poetry run siem_query_utils jupyterlab /workspace
+# API endpoints
+poetry run siem_query_utils serve
+```
+
 After running the above you can open [/api/v1/docs](http://localhost:8000/api/v1/docs) in your browser to get to the swagger debug ui which lets you test all the endpoints.
 
 You can also build and test the container locally using docker.
