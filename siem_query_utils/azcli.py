@@ -247,6 +247,8 @@ def azcli(cmd: list, error_result: Any = None):
     assert settings("logged_in")
     cmd += ["--only-show-errors", "-o", "json"]
     cli = get_default_cli()
+    for arg in cmd:
+        assert isinstance(arg, str)
     logger.debug(" ".join(["az"] + cmd).replace("\n", " ").strip()[:160])
     cli.invoke(cmd, out_file=open(os.devnull, "w"))
     if cli.result.error:

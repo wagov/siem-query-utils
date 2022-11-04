@@ -7,7 +7,7 @@ import hmac
 import importlib
 import json
 import os
-from collections import defaultdict, namedtuple
+from collections import namedtuple
 from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import datetime
 from enum import Enum
@@ -27,9 +27,6 @@ from fastapi.responses import PlainTextResponse, StreamingResponse
 
 from .azcli import azcli, cache, clean_path, logger, settings
 from .proxy import httpx_client
-
-Workspace = namedtuple("Workspace", "subscription, customerId, resourceGroup, name")
-
 
 router = APIRouter()
 
@@ -151,14 +148,18 @@ def analytics_query(workspaces: list[str], query: str, timespan: str = "P7D", gr
 def list_workspaces(fmt: OutputFormat = OutputFormat.LIST):
     "Get sentinel workspaces from {datalake}/notebooks/lists/SentinelWorkspaces.csv"
     # return workspaces dataframe from the datalake
-    dataframe = pandas.read_csv(
-        (settings("datalake_path") / "notebooks/lists/SentinelWorkspaces.csv").open()
-    ).join(
+    dataframe = (
         pandas.read_csv(
-            (settings("datalake_path") / "notebooks/lists/SecOps Groups.csv").open()
-        ).set_index("Alias"),
-        on="SecOps Group",
-        rsuffix="_secops",
+            (settings("datalake_path") / "notebooks/lists/SentinelWorkspaces.csv").open()
+        )
+        .join(
+            pandas.read_csv(
+                (settings("datalake_path") / "notebooks/lists/SecOps Groups.csv").open()
+            ).set_index("Alias"),
+            on="SecOps Group",
+            rsuffix="_secops",
+        )
+        .rename(columns={"SecOps Group": "alias", "Domains and IPs": "domains"})
     )
     if fmt == OutputFormat.LIST:
         return list(dataframe.customerId.dropna())
@@ -168,6 +169,28 @@ def list_workspaces(fmt: OutputFormat = OutputFormat.LIST):
         return dataframe.to_csv()
     elif fmt == OutputFormat.DF:
         return dataframe
+
+
+@router.get("/listDomains", response_class=PlainTextResponse)
+def list_domains(agency: str, fmt="text") -> str:
+    secops = list_workspaces(OutputFormat.DF)
+    secops = secops[secops.alias == agency]  # filter by agency
+    workspaces = list(secops.customerId.dropna())
+    if not workspaces:
+        raise HTTPException(404, f"agency {agency} not found")
+    existing_domains = set(str(secops.domains.dropna().sum()).strip().split("\n"))
+    if existing_domains == set("0"):
+        existing_domains = set()
+    active_domains = set(
+        pandas.DataFrame.from_records(
+            analytics_query(workspaces, "kql/distinct-domains.kql")
+        ).domain.values
+    )
+    domains = sorted(list(active_domains.union(existing_domains)))
+    if fmt == "text":
+        return "\n".join(domains)
+    elif fmt == "json":
+        return domains
 
 
 def upload_results(results, blobdest, filenamekeys):
@@ -404,6 +427,23 @@ def external_api(client, path: str, args: dict):
         "content": response.content,
     }
 
+def runzero_dataframe(agency):
+    """
+    Get the runzero dataframe for a given agency.
+
+    Args:
+        agency (str): Agency to get runzero dataframe for.
+    """
+    domains = list_domains(agency).split("\n")
+    query = " OR ".join([f'vhost:"{domain}"' for domain in domains])
+    runzero = httpx_client(settings("keyvault_session")["session"]["proxy_runzero-v1.0"])
+    response = runzero.get("/export/org/services.jsonl", params={"search": query})
+    rows = [json.loads(line) for line in response.text.split("\n") if line]
+    dataframe = pandas.DataFrame.from_records(rows)
+    for col in dataframe.columns:
+        dataframe[col] = dataframe[col].astype(str)
+    return dataframe
+    
 
 def report_csvs_raw(query_config: dict, path: AnyPath, agencies: pandas.DataFrame, timespan: str):
     """
@@ -422,6 +462,7 @@ def report_csvs_raw(query_config: dict, path: AnyPath, agencies: pandas.DataFram
         csvs = []
         for agency in agencies.alias.unique():
             dfs = {}
+            dfs["services"]
             for query in query_config.get("agency_sentinel", []):
                 workspaces = list(agencies[agencies.alias == agency].customerId.values)
                 dfs[query["name"]] = executor.submit(kql2df, query["kql"], timespan, workspaces)
@@ -454,11 +495,10 @@ def collect_report_csvs(
     """
     - Step through config performing per agency and global queries
     - Queries can either be log analytics or http api calls
-    - Responses are parsed as json and converted to dataframes, then compressed and uploaded to blob storage
+    - Responses are parsed into dataframes, then compressed and uploaded to blob storage
     """
     query_config = datalake_json(query_config)
-    agencies = list_workspaces(fmt=OutputFormat.DF).rename(columns={"SecOps Group": "alias"})
-    agencies = agencies[["customerId", "alias"]].dropna()[:limit]
+    agencies = list_workspaces(fmt=OutputFormat.DF)[["customerId", "alias"]].dropna()[:limit]
     output_path = (
         settings("datalake_path") / clean_path(blobpath) / datetime.utcnow().strftime("%Y-%m")
     )

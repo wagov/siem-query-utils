@@ -78,8 +78,8 @@ class EspartoReport:
         if agency == "ALL":
             self.agency_name = "Overview"
         else:
-            self.agency_info = wsdf[wsdf["SecOps Group"] == agency]
-            self.agency_name = self.agency_info["Primary agency"].max()
+            self.agency_info = wsdf[wsdf.alias == agency]
+            self.agency_name = self.agency_info["Primary Agency"].max()
         self.load_templates(mdpath=template)
         if not query_cache:
             query_cache = f"query_cache/{self.today.strftime('%Y-%m')}/{agency}_sentinel.zip"
