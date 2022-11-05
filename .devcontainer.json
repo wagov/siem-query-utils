@@ -1,0 +1,36 @@
+{
+	"name": "SIEM Query Utils Dockerfile",
+	"dockerFile": "Dockerfile",
+	"hostRequirements": {
+		"cpus": 4
+	},
+	"onCreateCommand": "./develop.sh",
+	"customizations": {
+		"codespaces": {
+			"repositories": {
+				"my_org/*": {
+					"permissions": {
+						"permissions": "write-all"
+					}
+				}
+			}
+		},
+		"vscode": {
+			"extensions": [
+				"ms-toolsai.jupyter",
+				"ms-python.python"
+			],
+			"settings": {
+				"python.linting.pylintEnabled": true,
+				"python.linting.enabled": true,
+				"python.defaultInterpreterPath": ".venv/bin/python3",
+				"python.linting.pylintPath": ".venv/bin/pylint",
+				"python.formatting.provider": "black",
+				"terminal.integrated.defaultProfile.linux": "bash"
+			}
+		}
+	},
+	"mounts": [
+		"source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind"
+	]
+}
