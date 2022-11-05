@@ -1,0 +1,5 @@
+SigninLogs
+| where TimeGenerated > ago(180d)
+| where UserType == "Member"
+| summarize users = count() by domain = tostring(split(UserPrincipalName, "@")[1]), UserType
+| where domain != ""

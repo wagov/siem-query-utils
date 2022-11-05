@@ -1,24 +1,34 @@
 [tool.black]
-line-length = 160
+line-length = 100
+skip-magic-trailing-comma = true
+preview = true
+
+[tool.pylint.format]
+max-line-length = 100
+
+[tool.pylint.logging]
+disable = ["logging-fstring-interpolation"]
+enable = ["logging-format-interpolation"]
+
 [tool.poetry]
 name = "siem-query-utils"
 version = "1.4.2"
 description = ""
 authors = ["Adon Metcalfe <adonm@fastmail.fm>"]
 readme = "README.md"
-packages = [{include = "siem_query_utils"}]
+packages = [{ include = "siem_query_utils" }]
 
 [tool.poetry.dependencies]
 python = "^3.10"
 azure-cli = "^2.41.0"
-fastapi = {extras = ["all"], version = "^0.85.1"}
+fastapi = { extras = ["all"], version = "^0.85.1" }
 fire = "^0.4.0"
 cacheout = "^0.14.1"
 markdown = "^3.4.1"
 flatten-json = "^0.1.13"
 pathvalidate = "^2.5.2"
 httpx-cache = "^0.6.1"
-cloudpathlib = {extras = ["azure"], version = "^0.10.0"}
+cloudpathlib = { extras = ["azure"], version = "^0.10.0" }
 azure-storage-blob = "^12.14.1"
 pandas = "^1.5.1"
 poetryup = "^0.12.3"
@@ -29,12 +39,14 @@ jupyterlab = "^3.5.0"
 jupyter = "^1.0.0"
 python-dotenv = "^0.21.0"
 pylint = "^2.15.5"
+weasyprint = "^57.0"
+openpyxl = "^3.0.10"
 
 [tool.poetry.scripts]
 siem_query_utils = "siem_query_utils:cli"
 
 [tool.poetry.group.dev.dependencies]
-black = {version = "^22.10.0", allow-prereleases = true}
+black = { version = "^22.10.0", allow-prereleases = true }
 pytest = "^7.2.0"
 
 [build-system]

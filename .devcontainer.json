@@ -1,4 +1,6 @@
 {
+	"name": "SIEM Query Utils Dockerfile",
+	"dockerFile": "Dockerfile",
 	"hostRequirements": {
 		"cpus": 4
 	},
@@ -19,5 +21,8 @@
 				"ms-python.python"
 			]
 		}
-	}
+	},
+	"mounts": [
+		"source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind"
+	]
 }
