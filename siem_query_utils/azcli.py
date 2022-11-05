@@ -212,15 +212,13 @@ def login(refresh: bool = False):
         app_state["logged_in"] = True
         app_state["login_time"] = datetime.utcnow()
     else: # attempt interactive login
-        result = []
-        while "environmentName" not in result:
+        while not app_state["logged_in"]:
             cli.invoke(["account", "show", "-o", "json"], out_file=open(os.devnull, "w"))
-            if "environmentName" not in cli.result.result:
-                cli.invoke(["login", "--tenant", os.environ["TENANT_ID"]], out_file=open(os.devnull, "w"))
-            else:
+            if cli.result.result and "environmentName" in cli.result.result:
                 app_state["logged_in"] = True
                 app_state["login_time"] = datetime.utcnow()
-                break
+            else:
+                cli.invoke(["login", "--tenant", os.environ["TENANT_ID"]], out_file=open(os.devnull, "w"))
     # setup all other env vars
     bootstrap(app_state)
 
