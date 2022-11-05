@@ -39,7 +39,7 @@ def atlaskit():
     """
     launch node helper on port 3000 (handle running in a non interactive session for nvm/node access).
     """
-    run(["bash", "-l", "-c", "node atlaskit-transformer/main.mjs"], check=False)
+    run(["bash", "-i", "./atlaskit-transformer.mjs"], check=False)
 
 
 def serve():
@@ -49,7 +49,7 @@ def serve():
     its recommended to run this behind a reverse proxy like nginx or traefik.
     """
     background_atlaskit = Popen(
-        ["bash", "-l", "-c", "node atlaskit-transformer/main.mjs"], close_fds=True
+        ["bash", "-i", "./atlaskit-transformer.mjs"], close_fds=True
     )
     host, port, log_level = "0.0.0.0", 8000, os.environ.get("LOG_LEVEL", "WARNING").lower()
     uvicorn.run(
@@ -72,7 +72,7 @@ def jupyterlab(path: str = "."):
         path (str, optional): Path to launch jupyterlab in. Defaults to ".".
     """
     run(
-        ["bash", "-l", "-c", "az login --tenant $TENANT_ID; jupyter lab"],
+        ["bash", "-i", "-c", "jupyter lab"],
         cwd=api.clean_path(os.path.expanduser(path)),
         check=False,
     )

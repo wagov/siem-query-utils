@@ -2,9 +2,9 @@
   "name": "atlaskit-transformer",
   "version": "0.1.0",
   "description": "",
-  "main": "main.mjs",
-  "scripts": {
-    "start": "node ./main.mjs"
+  "main": "atlaskit-transformer.mjs",
+  "bin": {
+    "serve": "atlaskit-transformer.mjs"
   },
   "type": "module",
   "keywords": [],

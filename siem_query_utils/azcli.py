@@ -194,6 +194,7 @@ def login(refresh: bool = False):
         refresh (bool, optional): force relogin. Defaults to False.
     """
     cli = get_default_cli()
+    cli.invoke(["extension", "add", "-n", "log-analytics", "-y"])
     if os.environ.get("IDENTITY_HEADER"):
         if refresh:
             cli.invoke(
@@ -210,16 +211,16 @@ def login(refresh: bool = False):
             exit(loginstatus)
         app_state["logged_in"] = True
         app_state["login_time"] = datetime.utcnow()
-    else:
-        loginstatus = cli.invoke(["account", "show", "-o", "json"], out_file=open(os.devnull, "w"))
-        try:
-            assert "environmentName" in cli.result.result
-            app_state["logged_in"] = True
-            app_state["login_time"] = datetime.utcnow()
-        except AssertionError as exc:
-            # bail as we aren't able to login
-            logger.error(exc)
-            exit()
+    else: # attempt interactive login
+        result = []
+        while "environmentName" not in result:
+            cli.invoke(["account", "show", "-o", "json"], out_file=open(os.devnull, "w"))
+            if "environmentName" not in cli.result.result:
+                cli.invoke(["login", "--tenant", os.environ["TENANT_ID"]], out_file=open(os.devnull, "w"))
+            else:
+                app_state["logged_in"] = True
+                app_state["login_time"] = datetime.utcnow()
+                break
     # setup all other env vars
     bootstrap(app_state)
 

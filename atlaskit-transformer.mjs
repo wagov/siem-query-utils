@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 "use strict";
 import Fastify from 'fastify';
 import { MarkdownTransformer } from '@atlaskit/editor-markdown-transformer';

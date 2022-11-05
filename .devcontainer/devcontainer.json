@@ -1,27 +1,20 @@
 {
 	"name": "Python 3.10 (Project)",
-	"build": {
-		"dockerfile": "../Dockerfile",
-		"context": ".."
-	},
+	"image": "mcr.microsoft.com/devcontainers/python:3.10",
 	"features": {
-		"ghcr.io/devcontainers/features/common-utils:1": {},
-		"ghcr.io/devcontainers/features/docker-in-docker:1": {},
-		"ghcr.io/devcontainers/features/github-cli:1": {}
-
+		"ghcr.io/devcontainers/features/github-cli": {},
+		"ghcr.io/devcontainers/features/docker-in-docker": {}
 	},
-	"hostRequirements": {
-		"cpus": 4
-	},
-	"onCreateCommand": "./install.sh",
-	"updateContentCommand": "./install.sh",
+	"hostRequirements": { "cpus": 4	},
 	"customizations": {
 		"vscode": {
 			"extensions": [
-				"ms-toolsai.jupyter",
 				"ms-python.python",
 				"ms-python.vscode-pylance"
 			]
 		}
-	}
+	},
+	"onCreateCommand": [ "/bin/bash", "-i", "install.sh" ],
+	"updateContentCommand": [ "/bin/bash", "-i", "update.sh" ],
+	"forwardPorts": [ 8000, 8888 ]
 }
