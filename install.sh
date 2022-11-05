@@ -3,5 +3,5 @@
 poetry install 
 poetry run az extension add -n log-analytics -y
 pushd atlaskit-transformer
-npm clean-install
+npm clean-install --global
 popd
