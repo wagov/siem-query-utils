@@ -7,6 +7,7 @@ sudo apt-get -y install weasyprint
 # Install python project
 pipx install poetry
 poetry install
+poetry run az extension add -n log-analytics -y
 # Install node component
 nvm install
 npm install

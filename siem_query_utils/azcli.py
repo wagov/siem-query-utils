@@ -194,7 +194,6 @@ def login(refresh: bool = False):
         refresh (bool, optional): force relogin. Defaults to False.
     """
     cli = get_default_cli()
-    cli.invoke(["extension", "add", "-n", "log-analytics", "-y"])
     if os.environ.get("IDENTITY_HEADER"):
         if refresh:
             cli.invoke(
