@@ -1,0 +1,3 @@
+[submodule "wasoc-notebook"]
+	path = wasoc-notebook
+	url = ./wasoc-notebook
