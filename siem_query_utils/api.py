@@ -370,18 +370,16 @@ def save_dataframes(obj: dict[pandas.DataFrame], path: AnyPath):
         obj (dict[pandas.DataFrame]): Dictionary of dataframes to write.
         path (AnyPath): Path to write to.
     """
-    logger.debug(f"Compressing {path}")
     mem_zip = io.BytesIO()
     with zipfile.ZipFile(mem_zip, "w", compression=zipfile.ZIP_DEFLATED) as mem_zipfile:
         for name, dataframe in obj.items():
-            if not isinstance(dataframe, pandas.DataFrame):  # handle futures
-                dataframe = dataframe.result()
             if dataframe.shape[0] > 1:
                 dataframe = dataframe.loc[:, dataframe.nunique() > 1]  # throw out invariant columns
             with mem_zipfile.open(
                 zipfile.ZipInfo(f"{name}.csv", date_time=datetime.now().timetuple()), "w"
             ) as csv_file:
                 csv_file.write(dataframe.to_csv(index=False).encode("utf8"))
+    logger.debug(f"Uploading zipped csvs to {path}")
     path.write_bytes(mem_zip.getvalue())
     return mem_zip.getbuffer().nbytes
 
@@ -425,7 +423,7 @@ def kql2df(kql: str, timespan: str, workspaces: list[str]) -> pandas.DataFrame:
     except Exception as exc:  # pylint: disable=broad-except
         logger.warning(f"{exc}: No data for {table} in {workspaces}")
         data = [{f"{table}": f"No Data in timespan {timespan}"}]
-    return pandas.DataFrame.from_records(data)
+    return pandas.json_normalize(data, max_level=1)
 
 
 def httpx_api(apiname: str) -> httpx_cache.Client:
@@ -441,7 +439,7 @@ def httpx_api(apiname: str) -> httpx_cache.Client:
     return httpx_client(settings("keyvault_session")["session"][f"proxy_{apiname}"])
 
 
-def runzero_dataframe(agency) -> pandas.DataFrame:
+def runzero2df(agency=None) -> pandas.DataFrame:
     """
     Get the runzero services for a given agency.
 
@@ -451,9 +449,14 @@ def runzero_dataframe(agency) -> pandas.DataFrame:
     Returns:
         pandas.DataFrame: Services for an agency as a dataframe.
     """
-    domains = list_domains(agency).split("\n")
-    query = " OR ".join([f'vhost:"{domain}"' for domain in domains])
-    response = httpx_api("runzero-v1.0").get("/export/org/services.jsonl", params={"search": query})
+    if agency is None:
+        params = {}
+    else:
+        domains = list_domains(agency).split("\n")
+        query = " OR ".join([f'vhost:"{domain}"' for domain in domains])
+        params = {"search": query}
+    logger.debug(f"Querying runzero services: {params}")
+    response = httpx_api("runzero-v1.0").get("/export/org/services.jsonl", params=params)
     rows = [json.loads(line) for line in response.text.split("\n") if line]
     dataframe = pandas.json_normalize(rows, max_level=1)
     return dataframe
@@ -472,24 +475,26 @@ def report_csvs_raw(query_config: dict, path: AnyPath, agencies: pandas.DataFram
     Raises:
         csv.exception: If there is an error uploading to blob storage.
     """
-    with ThreadPoolExecutor(max_workers=settings("max_threads")) as executor:
-        csvs = []
+    with ThreadPoolExecutor(max_workers=settings("max_threads")) as xctr:
+        futures = [] # target zip, csv name, future to a dataframe
         for agency in agencies.alias.unique():
-            dfs = {}
-            dfs["Internet Exposed Services"] = runzero_dataframe(agency)
+            csvzip = path / f"{agency}_data.zip"
+            futures.append((csvzip, "Internet Exposed Services", xctr.submit(runzero2df, agency)))
             for query in query_config.get("agency_sentinel", []):
-                workspaces = list(agencies[agencies.alias == agency].customerId.values)
-                dfs[query["name"]] = executor.submit(kql2df, query["kql"], timespan, workspaces)
-            csvs.append(executor.submit(save_dataframes, dfs, path / f"{agency}_sentinel.zip"))
-        dfs = {}
+                wsids = list(agencies[agencies.alias == agency].customerId.values)
+                futures.append((csvzip, query["name"], xctr.submit(kql2df, query["kql"], timespan, wsids)))
         for query in query_config.get("global_sentinel", []):
-            workspaces = list_workspaces(OutputFormat.LIST)
-            dfs[query["name"]] = executor.submit(kql2df, query["kql"], timespan, workspaces)
-        csvs.append(executor.submit(save_dataframes, dfs, path / "global_sentinel.zip"))
-        wait(csvs)
-        for csv in csvs:
-            if csv.exception():
-                raise csv.exception()
+            agency = "ALL"
+            csvzip = path / f"{agency}_data.zip"
+            wsids = list_workspaces(OutputFormat.LIST)
+            futures.append((csvzip, "Internet Exposed Services", xctr.submit(runzero2df)))
+            futures.append((csvzip, query["name"], xctr.submit(kql2df, query["kql"], timespan, wsids)))
+        csvzips = dict.fromkeys(list(zip(*futures))[0], {})
+        for csvzip, name, future in futures:
+            csvzips[csvzip][name] = future.result()
+        for zipname, dataframes in csvzips.items():
+            csvzips[zipname] = xctr.submit(save_dataframes, dataframes, zipname)
+        wait(csvzips.values())
 
 
 @router.post("/collect_report_csvs")
