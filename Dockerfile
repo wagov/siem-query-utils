@@ -26,9 +26,7 @@ ENV PATH "$PATH:/home/appuser/.local/bin"
 COPY --chown=appuser . ./app
 RUN mkdir .azure
 WORKDIR /home/appuser/app
-RUN poetry install 
-RUN poetry run az extension add -n log-analytics -y
-RUN cd atlaskit-transformer && npm clean-install
+RUN ./install.sh
 
 ENTRYPOINT [ "/bin/bash", "--login" ]
 CMD [ "-c", "poetry run siem_query_utils serve" ]
