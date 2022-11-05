@@ -35,13 +35,13 @@ def index():
     return RedirectResponse("/main_path")
 
 
-def atlaskit(run=True):
+def atlaskit(execute=True):
     """
     launch node helper on port 3000 (handle running in a non interactive session for nvm/node access).
     """
     node_module = importlib.resources.path(f"{__package__}.js", "atlaskit-transformer.mjs")
-    cmd = ["bash", "-i", node_module.name]
-    if run:
+    cmd = [node_module.resolve()]
+    if execute:
         run(cmd, check=False)
     return cmd
 
@@ -52,7 +52,7 @@ def serve():
     assumes you have already run `az login` and `az account set` to set the correct subscription.
     its recommended to run this behind a reverse proxy like nginx or traefik.
     """
-    background_atlaskit = Popen(atlaskit(), close_fds=True)
+    background_atlaskit = Popen(atlaskit(execute=False), close_fds=True)
     host, port, log_level = "0.0.0.0", 8000, os.environ.get("LOG_LEVEL", "WARNING").lower()
     uvicorn.run(
         f"{__package__}:app",

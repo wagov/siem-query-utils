@@ -217,7 +217,7 @@ def login(refresh: bool = False):
                 app_state["logged_in"] = True
                 app_state["login_time"] = datetime.utcnow()
             else:
-                cli.invoke(["login", "--tenant", os.environ["TENANT_ID"]], out_file=open(os.devnull, "w"))
+                cli.invoke(["login", "--tenant", os.environ["TENANT_ID"], "--use-device-code"], out_file=open(os.devnull, "w"))
     # setup all other env vars
     bootstrap(app_state)
 
