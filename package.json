@@ -2,10 +2,7 @@
   "name": "atlaskit-transformer",
   "version": "0.1.0",
   "description": "",
-  "main": "atlaskit-transformer.mjs",
-  "bin": {
-    "serve": "atlaskit-transformer.mjs"
-  },
+  "main": "siem_query_utils/js/atlaskit-transformer.mjs",
   "type": "module",
   "keywords": [],
   "author": "",
