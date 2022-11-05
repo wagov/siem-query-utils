@@ -4,5 +4,4 @@
     "python.defaultInterpreterPath": ".venv/bin/python3",
     "python.linting.pylintPath": ".venv/bin/pylint",
     "python.formatting.provider": "black",
-    "terminal.integrated.defaultProfile.linux": "bash"
 }
