@@ -1,10 +1,10 @@
 {
-	"name": "SIEM Query Utils Dockerfile",
-	"dockerFile": "Dockerfile",
+	"name": "Dockerfile",
+	"image": "ghcr.io/wagov/siem-query-utils:main",
 	"hostRequirements": {
 		"cpus": 4
 	},
-	"onCreateCommand": "./develop.sh",
+	"updateContentCommand": "poetry install",
 	"customizations": {
 		"codespaces": {
 			"repositories": {

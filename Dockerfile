@@ -30,5 +30,5 @@ RUN poetry install
 RUN poetry run az extension add -n log-analytics -y
 RUN cd atlaskit-transformer && npm clean-install
 
-ENTRYPOINT [ "/bin/bash", "--login", "-c" ]
-CMD [ "poetry run siem_query_utils serve" ]
+ENTRYPOINT [ "/bin/bash", "--login" ]
+CMD [ "-c", "poetry run siem_query_utils serve" ]
