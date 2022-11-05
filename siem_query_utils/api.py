@@ -5,9 +5,10 @@ import base64
 import hashlib
 import hmac
 import importlib
+import io
 import json
 import os
-from collections import namedtuple
+import zipfile
 from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import datetime
 from enum import Enum
@@ -15,9 +16,7 @@ from mimetypes import guess_type
 from pathlib import Path
 from typing import Optional
 
-import io
-import zipfile
-import httpx
+import httpx_cache
 import pandas
 import requests
 from cloudpathlib import AnyPath
@@ -173,6 +172,16 @@ def list_workspaces(fmt: OutputFormat = OutputFormat.LIST):
 
 @router.get("/listDomains", response_class=PlainTextResponse)
 def list_domains(agency: str, fmt="text") -> str:
+    """
+    Returns a list of domains for a given agency.
+
+    Args:
+        agency (str): Agency name.
+        fmt (str, optional): Output format. Defaults to "text".
+
+    Returns:
+        str: List of domains.
+    """
     secops = list_workspaces(OutputFormat.DF)
     secops = secops[secops.alias == agency]  # filter by agency
     workspaces = list(secops.customerId.dropna())
@@ -213,7 +222,7 @@ def atlaskit_client():
     """
     Client for the atlaskit API
     """
-    return httpx.Client(base_url="http://127.0.0.1:3000")
+    return httpx_cache.Client(base_url="http://127.0.0.1:3000")
 
 
 class AtlaskitFmt(str, Enum):
@@ -419,31 +428,36 @@ def kql2df(kql: str, timespan: str, workspaces: list[str]) -> pandas.DataFrame:
     return pandas.DataFrame.from_records(data)
 
 
-def external_api(client, path: str, args: dict):
-    response = client.get(url=path, **args)
-    return {
-        "status_code": response.status_code,
-        "headers": dict(response.headers),
-        "content": response.content,
-    }
-
-def runzero_dataframe(agency):
+def httpx_api(apiname: str) -> httpx_cache.Client:
     """
-    Get the runzero dataframe for a given agency.
+    Returns a httpx client for the given api configured using keyvault session.
+
+    Args:
+        apiname (str): Name of the api to use.
+
+    Returns:
+        httpx_cache.Client: httpx client for the api.
+    """
+    return httpx_client(settings("keyvault_session")["session"][f"proxy_{apiname}"])
+
+
+def runzero_dataframe(agency) -> pandas.DataFrame:
+    """
+    Get the runzero services for a given agency.
 
     Args:
         agency (str): Agency to get runzero dataframe for.
+
+    Returns:
+        pandas.DataFrame: Services for an agency as a dataframe.
     """
     domains = list_domains(agency).split("\n")
     query = " OR ".join([f'vhost:"{domain}"' for domain in domains])
-    runzero = httpx_client(settings("keyvault_session")["session"]["proxy_runzero-v1.0"])
-    response = runzero.get("/export/org/services.jsonl", params={"search": query})
+    response = httpx_api("runzero-v1.0").get("/export/org/services.jsonl", params={"search": query})
     rows = [json.loads(line) for line in response.text.split("\n") if line]
-    dataframe = pandas.DataFrame.from_records(rows)
-    for col in dataframe.columns:
-        dataframe[col] = dataframe[col].astype(str)
+    dataframe = pandas.json_normalize(rows, max_level=1)
     return dataframe
-    
+
 
 def report_csvs_raw(query_config: dict, path: AnyPath, agencies: pandas.DataFrame, timespan: str):
     """
@@ -462,7 +476,7 @@ def report_csvs_raw(query_config: dict, path: AnyPath, agencies: pandas.DataFram
         csvs = []
         for agency in agencies.alias.unique():
             dfs = {}
-            dfs["services"]
+            dfs["Internet Exposed Services"] = runzero_dataframe(agency)
             for query in query_config.get("agency_sentinel", []):
                 workspaces = list(agencies[agencies.alias == agency].customerId.values)
                 dfs[query["name"]] = executor.submit(kql2df, query["kql"], timespan, workspaces)
@@ -472,12 +486,6 @@ def report_csvs_raw(query_config: dict, path: AnyPath, agencies: pandas.DataFram
             workspaces = list_workspaces(OutputFormat.LIST)
             dfs[query["name"]] = executor.submit(kql2df, query["kql"], timespan, workspaces)
         csvs.append(executor.submit(save_dataframes, dfs, path / "global_sentinel.zip"))
-        global_https = {}
-        for query in query_config.get("global_https", []):
-            global_https[query["name"]] = executor.submit(
-                external_api, query["api"], query["path"], query.get("args", {})
-            )
-        csvs.append(executor.submit(save_dataframes, global_https, path / "global_https.zip"))
         wait(csvs)
         for csv in csvs:
             if csv.exception():
@@ -493,6 +501,15 @@ def collect_report_csvs(
     limit: int = None,
 ):
     """
+    Collects csvs for a report. Queries are run in parallel and the results are saved to a zip file per agency.
+    The zip files are for use by the report generation notebook and by users who want an offline copy of the data.
+
+    Args:
+        tasks (BackgroundTasks): Background tasks executor.
+        query_config (str, optional): Path to query config. Defaults to "notebooks/lists/report-queries.json".
+        blobpath (str, optional): Path to save query results (as zipped csvs) to. Defaults to "notebooks/query_cache".
+        timespan (str, optional): Timespan to query. Defaults to "P30D".
+        limit (int, optional): Limit the number of agencies to query (for testing). Defaults to None.
     - Step through config performing per agency and global queries
     - Queries can either be log analytics or http api calls
     - Responses are parsed into dataframes, then compressed and uploaded to blob storage
