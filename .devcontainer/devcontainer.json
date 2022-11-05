@@ -1,19 +1,23 @@
 {
-	"name": "Python 3",
-	"image": "mcr.microsoft.com/devcontainers/python:3.10-bullseye",
-	"features": {
-		"ghcr.io/devcontainers/features/node:1": {
-			"version": "19"
-		},
-		"ghcr.io/devcontainers/features/docker-from-docker:1": {}
+	"hostRequirements": {
+		"cpus": 4
 	},
-
-	// Use 'forwardPorts' to make a list of ports inside the container available locally.
-	// "forwardPorts": [],
-
-	// Use 'postCreateCommand' to run commands after the container is created.
-	"postCreateCommand": "./develop.sh",
-
-	// Set `remoteUser` to `root` to connect as root instead. More info: https://aka.ms/vscode-remote/containers/non-root.
-	"remoteUser": "vscode"
+	"onCreateCommand": "./develop.sh",
+	"customizations": {
+		"codespaces": {
+			"repositories": {
+				"my_org/*": {
+					"permissions": {
+						"permissions": "write-all"
+					}
+				}
+			}
+		},
+		"vscode": {
+			"extensions": [
+				"ms-toolsai.jupyter",
+				"ms-python.python"
+			]
+		}
+	}
 }
