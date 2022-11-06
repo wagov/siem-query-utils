@@ -192,11 +192,11 @@ def list_domains(agency: str, fmt="text") -> str:
     existing_domains = set(str(secops.domains.dropna().sum()).strip().split("\n"))
     if existing_domains == set("0"):
         existing_domains = set()
-    active_domains = set(
-        pandas.DataFrame.from_records(
-            analytics_query(workspaces, "kql/distinct-domains.kql")
-        ).domain.values
-    )
+    active_domains = analytics_query(workspaces, "kql/distinct-domains.kql")
+    if not active_domains:
+        active_domains = set()
+    else:
+        active_domains = set(pandas.DataFrame.from_records(active_domains).domain.values)
     domains = sorted(list(active_domains.union(existing_domains)))
     if fmt == "text":
         return "\n".join(domains)
@@ -358,45 +358,50 @@ def summarise(blobpath: str, query: str = ExampleQuery, timespan: str = "P7D"):
     - Results are saved as a single json file intended for e.g. powerbi
     """
     results = analytics_query(list_workspaces(), query, timespan)
-    blobpath = blobpath.format(querydate=datetime.now().date().isoformat())
+    blobpath = blobpath.format(querydate=datetime.utcnow().date().isoformat())
     logger.info(f"Uploading to {blobpath}")
     datalake_json(blobpath, results)
     return len(results)
 
 
-def save_dataframes(path: AnyPath, obj: dict[pandas.DataFrame]):
+def zip_dataframes(obj: dict[pandas.DataFrame]) -> io.BytesIO:
     """
-    Writes a dictionary of dataframes to a path (as zipped json).
+    Creates a zipped set of json files from a dict of dataframes.
 
     Args:
-        path (AnyPath): Path to write to.
         obj (dict[pandas.DataFrame]): Dictionary of dataframes to write.
+
+    Returns:
+        io.BytesIO: BytesIO object containing the zip file.
     """
     zip_bytes = io.BytesIO()
-    now = datetime.now().timetuple()
+    now = datetime.utcnow().timetuple()
     with zipfile.ZipFile(zip_bytes, "a") as zip_file:
         for name, dframe in obj.items():
             if dframe.shape[0] > 1:  # only analyse if there is more than one row
                 dframe = dframe.loc[
                     :, (dframe != dframe.iloc[0]).any()
                 ]  # throw out invariant columns
-            dframe = dframe.convert_dtypes() # enhance fields where possible
+            dframe = dframe.convert_dtypes()  # enhance fields where possible
             for col, dtype in zip(dframe.columns, dframe.dtypes):
-                if dtype == "string":
-                    for timestr in ["seen", "updated", "created", "date", "time"]:
-                        if timestr in col.lower(): # enhance dates if possible
+                for timestr in ["seen", "updated", "created", "date", "time"]:
+                    if timestr in col.lower():  # enhance dates if possible
+                        if "str" in str(dtype).lower():
                             try:
                                 dframe[col] = pandas.to_datetime(dframe[col])
-                            except pandas.errors.ParserError:
+                            except ValueError:
                                 pass
-                if dtype == 'object': # simplify nested objects
-                    dframe[col] = dframe[col].astype('string')
+                        elif "int" in str(dtype).lower():
+                            try:
+                                dframe[col] = pandas.to_datetime(dframe[col], unit="s")
+                            except ValueError:
+                                pass
+                if dtype == "object":  # simplify nested objects
+                    dframe[col] = dframe[col].astype("string")
             json_info = zipfile.ZipInfo(f"{name}.json", date_time=now)
-            json_str = dframe.convert_dtypes().to_json(orient="records", format_date="iso")
+            json_str = dframe.to_json(orient="records", date_format="iso")
             zip_file.writestr(json_info, json_str, zipfile.ZIP_DEFLATED)
-    logger.debug(f"Uploading zipped json to {path}")
-    path.write_bytes(zip_bytes.getvalue())
-    return zip_bytes.getbuffer().nbytes
+    return zip_bytes
 
 
 def load_dataframes(path: AnyPath) -> dict[pandas.DataFrame]:
@@ -473,13 +478,18 @@ def runzero2df(agency=None) -> pandas.DataFrame:
         params = {"search": query}
     logger.debug(f"Querying runzero services: {params}")
     response = httpx_api("runzero-v1.0").get("/export/org/services.jsonl", params=params)
-    rows = pandas.read_json(response.text, lines=True).to_dict(orient="records") # pylint: disable=no-member
+    rows = pandas.read_json(response.text, lines=True).to_dict(  # pylint: disable=no-member
+        orient="records"
+    )
     if len(rows) == 0:
         dframe = pandas.DataFrame.from_records(
             [{"External Internet Services": f"No Data found for {domains}"}]
         )
     else:
         dframe = pandas.json_normalize(rows, max_level=1)
+        for col in dframe.columns:  # drop columns about scanning infrastructure
+            if "agent_" in col or "site_" in col:
+                dframe = dframe.drop(columns=col)
     return dframe
 
 
@@ -502,14 +512,21 @@ def report_json_raw(query_config: dict, path: AnyPath, agencies: pandas.DataFram
                 futures[query["name"]] = xctr.submit(kql2df, query["kql"], timespan, wsids)
             agency_dframes = {name: future.result() for name, future in futures.items()}
             agency_dframes["Agency Info"] = agencies[agencies.alias == agency]
-            save_dataframes(jsonzip, agency_dframes)
-        agency = "ALL"
-        jsonzip, futures = path / f"{agency}_data.zip", {}
+            zip_bytes = zip_dataframes(agency_dframes)
+            if agencies.alias.nunique() == 1:  # just return the zip data if theres only one agency
+                return zip_bytes
+            logger.debug(f"Uploading {agency} zipped json to {jsonzip}")
+            jsonzip.write_bytes(zip_bytes.getvalue()) # save the zip file
+        jsonzip, futures = path / "ALL_data.zip", {}
         futures["Internet Exposed Services"] = xctr.submit(runzero2df)
         wsids = list_workspaces(OutputFormat.LIST)
         for query in query_config.get("global_sentinel", []):
             futures[query["name"]] = xctr.submit(kql2df, query["kql"], timespan, wsids)
-        save_dataframes(jsonzip, {name: future.result() for name, future in futures.items()})
+        zip_bytes = zip_dataframes({name: future.result() for name, future in futures.items()})
+        if agencies.shape[0] == 0: # return zip for all if no agencies
+            return zip_bytes
+        logger.debug(f"Uploading ALL zipped json to {jsonzip}")
+        jsonzip.write_bytes(zip_bytes.getvalue()) # save the zip file
 
 
 @router.post("/collect_report_json")
@@ -518,7 +535,7 @@ def collect_report_json(
     query_config: str = "notebooks/lists/report-queries.json",
     blobpath: str = "notebooks/query_cache",
     timespan: str = "P30D",
-    limit: int = None,
+    agency: str = None,
 ):
     """
     Collects json for a report. Queries are run in parallel and the results are saved to a zip file per agency.
@@ -529,18 +546,30 @@ def collect_report_json(
         query_config (str, optional): Path to query config. Defaults to "notebooks/lists/report-queries.json".
         blobpath (str, optional): Path to save query results (as zipped json) to. Defaults to "notebooks/query_cache".
         timespan (str, optional): Timespan to query. Defaults to "P30D".
-        limit (int, optional): Limit the number of agencies to query (for testing). Defaults to None.
+        agency (str, optional): Agency to return zip for synchronously. Defaults to None.
     - Step through config performing per agency and global queries
     - Queries can either be log analytics or http api calls
     - Responses are parsed into dataframes, then compressed and uploaded to blob storage
     """
     query_config = datalake_json(query_config)
-    agencies = list_workspaces(fmt=OutputFormat.DF).dropna(subset=["customerId", "alias"])[:limit]
+    agencies = list_workspaces(fmt=OutputFormat.DF).dropna(subset=["customerId", "alias"])
+    if agency:
+        agencies = agencies[agencies.alias == agency]
+        if agencies.shape[0] == 0 and agency != "ALL": # if agency is not found, return 404
+            raise HTTPException(status_code=404, detail=f"Agency {agency} not found")
     output_path = (
         settings("datalake_path") / clean_path(blobpath) / datetime.utcnow().strftime("%Y-%m")
     )
     for query in query_config.get("global_https", []):
         query["api"] = httpx_client(settings("keyvault_session")[f"proxy_{query['api']}"])
+    if agency:
+        zip_bytes = report_json_raw(query_config, output_path, agencies, timespan)
+        zip_bytes.seek(0)
+        return StreamingResponse(
+            zip_bytes,
+            media_type="application/zip",
+            headers={"Content-Disposition": f"attachment; filename={agency}_data.zip"},
+        )
     tasks.add_task(report_json_raw, query_config, output_path, agencies, timespan)
     return {
         "agencies": agencies[["customerId", "alias"]].to_dict("records"),
