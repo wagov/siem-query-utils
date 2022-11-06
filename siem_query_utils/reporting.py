@@ -82,8 +82,8 @@ class EspartoReport:
             self.agency_name = self.agency_info["Primary Agency"].max()
         self.load_templates(mdpath=template)
         if not query_cache:
-            query_cache = f"query_cache/{self.today.strftime('%Y-%m')}/{agency}_data.zip"
-        self.queries = load_dataframes(self.path / query_cache)
+            self.query_cache = self.path / f"query_cache/{self.today.strftime('%Y-%m')}/{agency}_data.zip"
+        self.queries = load_dataframes(self.query_cache)
         self.report = esparto.Page(title=self.report_title)
 
     def load_templates(self, mdpath: str):
@@ -147,6 +147,9 @@ class EspartoReport:
 
         filename = f"{self.today.strftime('%Y-%m')} {self.report_title} ({self.agency}).pdf"
         pdf_file = report_dir / clean_path(filename)
+        data_file = pdf_file.with_suffix(".zip")
+        data_file = data_file.with_name(data_file.name.replace("Report", "Report Data"))
+        data_file.write_bytes(self.query_cache.read_bytes())
         with tempfile.NamedTemporaryFile(mode="w+b", suffix=".pdf") as pdf_file_tmp:
             html = self.report.save_pdf(pdf_file_tmp, return_html=True)
             pdf_file_tmp.seek(0)

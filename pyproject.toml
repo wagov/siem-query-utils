@@ -41,6 +41,7 @@ python-dotenv = "^0.21.0"
 pylint = "^2.15.5"
 weasyprint = "^57.1"
 openpyxl = "^3.0.10"
+papermill = "^2.4.0"
 
 [tool.poetry.scripts]
 siem_query_utils = "siem_query_utils:cli"

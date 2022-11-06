@@ -201,7 +201,7 @@ def list_domains(agency: str, fmt="text") -> str:
         active_domains = set(pandas.DataFrame.from_records(active_domains).domain.values)
     all_domains = sorted(list(active_domains.union(existing_domains)))
     domains = []
-    for domain in all_domains: # filter out subdomains
+    for domain in all_domains:  # filter out subdomains
         for check in all_domains:
             if domain != check and domain.endswith(check):
                 break
@@ -373,7 +373,7 @@ def summarise(blobpath: str, query: str = ExampleQuery, timespan: str = "P7D"):
     return len(results)
 
 
-def zip_data(obj: dict[pandas.DataFrame]) -> io.BytesIO:
+def zip_data(obj: dict[pandas.DataFrame]) -> bytes:
     """
     Creates a zipped set of json files from a dict of dataframes.
     If any of the keys don't end in .json they are written as
@@ -383,7 +383,7 @@ def zip_data(obj: dict[pandas.DataFrame]) -> io.BytesIO:
         obj (dict[pandas.DataFrame]): Dictionary of dataframes to write.
 
     Returns:
-        io.BytesIO: BytesIO object containing the zip file.
+        bytes: Zipped bytes of the data.
     """
     zip_bytes = io.BytesIO()
     now = datetime.utcnow().timetuple()
@@ -412,7 +412,7 @@ def zip_data(obj: dict[pandas.DataFrame]) -> io.BytesIO:
             json_info = zipfile.ZipInfo(f"{name}", date_time=now)
             json_str = dframe.to_json(orient="records", date_format="iso")
             zip_file.writestr(json_info, json_str, zipfile.ZIP_DEFLATED)
-    return zip_bytes
+    return zip_bytes.getvalue()
 
 
 def load_dataframes(path: AnyPath) -> dict[pandas.DataFrame]:
@@ -435,7 +435,9 @@ def load_dataframes(path: AnyPath) -> dict[pandas.DataFrame]:
     return obj
 
 
-def kql2df(kql: str, timespan: str, workspaces: list[str], attempt=0, max_attempts=5) -> pandas.DataFrame:
+def kql2df(
+    kql: str, timespan: str, workspaces: list[str], attempt=0, max_attempts=5
+) -> pandas.DataFrame:
     """
     Load data from Sentinel into a dataframe.
 
@@ -516,46 +518,44 @@ def report_json_raw(query_config: dict, path: AnyPath, agencies: pandas.DataFram
         timespan (str): Timespan to query.
     """
     with ThreadPoolExecutor(max_workers=settings("max_threads")) as xctr:
-        agency_queries = query_config.get("agency_sentinel", [])
-        for agency in agencies.alias.unique():
+        kql_base = query_config["kql_base"]
+        for query, kql_path in query_config["kql"].items():
+            query_config["kql"][query] = (kql_base / kql_path).read_text()
+        for agency in list(agencies.alias.unique()) + ["ALL"]:
+            logger.debug(f"Querying sentinel: {agency}")
             jsonzip, futures, text_files = path / f"{agency}_data.zip", {}, {}
-            for query in agency_queries:
-                wsids = list(agencies[agencies.alias == agency].customerId.values)
-                kql = load_kql(query["kql"])
-                futures[query["name"] + ".json"] = xctr.submit(kql2df, kql, timespan, wsids)
-                text_files[query["name"] + ".kql"] = kql
+            for name, kql in query_config["kql"].items():
+                if agency == "ALL":
+                    wsids = list_workspaces(OutputFormat.LIST)
+                else:
+                    wsids = list(agencies[agencies.alias == agency].customerId.values)
+                futures[f"{name}.json"] = xctr.submit(kql2df, kql, timespan, wsids)
+                text_files[f"{name}.kql"] = kql
             report_data = {name: future.result() for name, future in futures.items()}
-            domains = list_domains(agency)
-            runzero_query = " OR ".join([f'vhost:"%{domain}"' for domain in domains.split("\n")])
-            report_data["Internet Exposed Services.search.runzero"] = "# Export RunZero Services\n" + runzero_query
-            report_data["Internet Exposed Services.json"] = runzero2df({"search": runzero_query})
-            agency_info = agencies[agencies.alias == agency].copy()
-            agency_info["domains"] = domains
-            report_data["Agency Info.json"] = agency_info
             report_data.update(text_files)
-            zip_bytes = zip_data(report_data)
-            if agencies.alias.nunique() == 1:  # just return the zip data if theres only one agency
-                return zip_bytes
+            if agency == "ALL":
+                logger.debug("Querying runzero assets: ALL")
+                response = httpx_api("runzero-v1.0").get(
+                    "/export/org/assets.csv"
+                )  # use csv as memory requirement is lower
+                runzero_assets = pandas.read_csv(io.StringIO(response.text))
+                report_data["Internet Exposed Assets.json"] = runzero_assets
+            else:
+                domains = list_domains(agency)
+                runzero_query = " OR ".join([f'vhost:"%{domain}"' for domain in domains.split("\n")])
+                report_data["Internet Exposed Services.search.runzero"] = (
+                    "# Export RunZero Services\n" + runzero_query
+                )
+                report_data["Internet Exposed Services.json"] = runzero2df({"search": runzero_query})
+                agency_info = agencies[agencies.alias == agency].copy()
+                agency_info["domains"] = domains
+                report_data["Agency Info.json"] = agency_info
+            zip_bytes = zip_data(report_data)   
             logger.debug(f"Uploading {agency} zipped json to {jsonzip}")
-            jsonzip.write_bytes(zip_bytes.getvalue()) # save the zip file
-        jsonzip, futures, text_files = path / "ALL_data.zip", {}, {}
-        wsids = list_workspaces(OutputFormat.LIST)
-        logger.debug("Querying runzero assets: ALL")
-        response = httpx_api("runzero-v1.0").get("/export/org/assets.csv") # use csv as memory requirement is lower
-        runzero_assets = pandas.read_csv(io.StringIO(response.text))
-        futures["Internet Exposed Assets.json"] = xctr.submit(lambda: runzero_assets)
-        for query in query_config.get("global_sentinel", []):
-            kql = load_kql(query["kql"])
-            futures[query["name"] + ".json"] = xctr.submit(kql2df, kql, timespan, wsids)
-            text_files[query["name"] + ".kql"] = kql
-        logger.debug(f"Zipping {jsonzip}")
-        report_data = {name: future.result() for name, future in futures.items()}
-        report_data.update(text_files)
-        zip_bytes = zip_data(report_data)
-        if agencies.shape[0] == 0: # return zip for all if no agencies
-            return zip_bytes
-        logger.debug(f"Uploading ALL zipped json to {jsonzip}")
-        jsonzip.write_bytes(zip_bytes.getvalue()) # save the zip file
+            jsonzip.write_bytes(zip_bytes)  # save the zip file
+            # return the zip data if theres only one agency
+            if agencies.shape[0] == 0 or agencies.alias.nunique() == 1:
+                return zip_bytes
 
 
 @router.post("/collect_report_json")
@@ -581,10 +581,13 @@ def collect_report_json(
     - Responses are parsed into dataframes, then compressed and uploaded to blob storage
     """
     query_config = datalake_json(query_config)
+    query_config["kql_base"] = settings("datalake_path") / clean_path(
+        query_config.get("kql_base", "notebooks/kql")
+    )
     agencies = list_workspaces(fmt=OutputFormat.DF).dropna(subset=["customerId", "alias"])
     if agency:
         agencies = agencies[agencies.alias == agency]
-        if agencies.shape[0] == 0 and agency != "ALL": # if agency is not found, return 404
+        if agencies.shape[0] == 0 and agency != "ALL":  # if agency is not found, return 404
             raise HTTPException(status_code=404, detail=f"Agency {agency} not found")
     output_path = (
         settings("datalake_path") / clean_path(blobpath) / datetime.utcnow().strftime("%Y-%m")
@@ -593,9 +596,8 @@ def collect_report_json(
         query["api"] = httpx_client(settings("keyvault_session")[f"proxy_{query['api']}"])
     if agency:
         zip_bytes = report_json_raw(query_config, output_path, agencies, timespan)
-        zip_bytes.seek(0)
         return StreamingResponse(
-            zip_bytes,
+            io.BytesIO(zip_bytes),
             media_type="application/zip",
             headers={"Content-Disposition": f"attachment; filename={agency}_data.zip"},
         )

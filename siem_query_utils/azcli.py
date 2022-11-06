@@ -89,7 +89,7 @@ def boot(secret: str) -> str:
     """
     # cache session creds for an hour
     secret = azcli(["keyvault", "secret", "show", "--id", secret])
-    if "error" in secret:
+    if not secret or "error" in secret:
         logger.warning(secret["error"])
         raise HTTPException(403, "KEYVAULT_SESSION_SECRET not available")
     return secret["value"]
