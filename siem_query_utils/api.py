@@ -199,7 +199,14 @@ def list_domains(agency: str, fmt="text") -> str:
         active_domains = set()
     else:
         active_domains = set(pandas.DataFrame.from_records(active_domains).domain.values)
-    domains = sorted(list(active_domains.union(existing_domains)))
+    all_domains = sorted(list(active_domains.union(existing_domains)))
+    domains = []
+    for domain in all_domains: # filter out subdomains
+        for check in all_domains:
+            if domain != check and domain.endswith(check):
+                break
+        else:
+            domains.append(domain.strip())
     if fmt == "text":
         return "\n".join(domains)
     elif fmt == "json":
@@ -366,9 +373,11 @@ def summarise(blobpath: str, query: str = ExampleQuery, timespan: str = "P7D"):
     return len(results)
 
 
-def zip_dataframes(obj: dict[pandas.DataFrame]) -> io.BytesIO:
+def zip_data(obj: dict[pandas.DataFrame]) -> io.BytesIO:
     """
     Creates a zipped set of json files from a dict of dataframes.
+    If any of the keys don't end in .json they are written as
+    plain text instead of as a dataframe to json.
 
     Args:
         obj (dict[pandas.DataFrame]): Dictionary of dataframes to write.
@@ -380,10 +389,10 @@ def zip_dataframes(obj: dict[pandas.DataFrame]) -> io.BytesIO:
     now = datetime.utcnow().timetuple()
     with zipfile.ZipFile(zip_bytes, "a") as zip_file:
         for name, dframe in obj.items():
-            if dframe.shape[0] > 1:  # only analyse if there is more than one row
-                dframe = dframe.loc[
-                    :, (dframe != dframe.iloc[0]).any()
-                ]  # throw out invariant columns
+            if not name.endswith(".json"):
+                txt_info = zipfile.ZipInfo(f"{name}", date_time=now)
+                zip_file.writestr(txt_info, dframe, zipfile.ZIP_DEFLATED)
+                continue
             dframe = dframe.convert_dtypes()  # enhance fields where possible
             for col, dtype in zip(dframe.columns, dframe.dtypes):
                 for timestr in ["seen", "updated", "created", "date", "time"]:
@@ -400,7 +409,7 @@ def zip_dataframes(obj: dict[pandas.DataFrame]) -> io.BytesIO:
                                 pass
                 if dtype == "object":  # simplify nested objects
                     dframe[col] = dframe[col].astype("string")
-            json_info = zipfile.ZipInfo(f"{name}.json", date_time=now)
+            json_info = zipfile.ZipInfo(f"{name}", date_time=now)
             json_str = dframe.to_json(orient="records", date_format="iso")
             zip_file.writestr(json_info, json_str, zipfile.ZIP_DEFLATED)
     return zip_bytes
@@ -420,9 +429,9 @@ def load_dataframes(path: AnyPath) -> dict[pandas.DataFrame]:
     obj = {}
     with zipfile.ZipFile(path, "r") as mem_zipfile:
         for name in mem_zipfile.namelist():
-            with mem_zipfile.open(name) as json_file:
-                logger.debug(name)
-                obj = pandas.read_json(json_file, orient="records")
+            if name.endswith(".json"):
+                with mem_zipfile.open(name) as json_file:
+                    obj[name[:-5]] = pandas.read_json(json_file, orient="records")
     return obj
 
 
@@ -469,22 +478,16 @@ def httpx_api(apiname: str) -> httpx_cache.Client:
     return httpx_client(settings("keyvault_session")["session"][f"proxy_{apiname}"])
 
 
-def runzero2df(agency=None) -> pandas.DataFrame:
+def runzero2df(params: dict = {}) -> pandas.DataFrame:
     """
     Get the runzero services for a given agency.
 
     Args:
-        agency (str): Agency to get runzero dataframe for.
+        params (dict): Parameters to pass to the runzero api.
 
     Returns:
         pandas.DataFrame: Services for an agency as a dataframe.
     """
-    if agency is None:
-        params = {}
-    else:
-        domains = list_domains(agency).split("\n")
-        query = " OR ".join([f'vhost:"{domain}"' for domain in domains])
-        params = {"search": query}
     logger.debug(f"Querying runzero services: {params}")
     response = httpx_api("runzero-v1.0").get("/export/org/services.jsonl", params=params)
     rows = pandas.read_json(response.text, lines=True).to_dict(  # pylint: disable=no-member
@@ -492,7 +495,7 @@ def runzero2df(agency=None) -> pandas.DataFrame:
     )
     if len(rows) == 0:
         dframe = pandas.DataFrame.from_records(
-            [{"External Internet Services": f"No Data found for {domains}"}]
+            [{"External Internet Services": f"No Data found for {params}"}]
         )
     else:
         dframe = pandas.json_normalize(rows, max_level=1)
@@ -513,29 +516,42 @@ def report_json_raw(query_config: dict, path: AnyPath, agencies: pandas.DataFram
         timespan (str): Timespan to query.
     """
     with ThreadPoolExecutor(max_workers=settings("max_threads")) as xctr:
+        agency_queries = query_config.get("agency_sentinel", [])
         for agency in agencies.alias.unique():
-            jsonzip, futures = path / f"{agency}_data.zip", {}
-            futures["Internet Exposed Services"] = xctr.submit(runzero2df, agency)
-            for query in query_config.get("agency_sentinel", []):
+            jsonzip, futures, text_files = path / f"{agency}_data.zip", {}, {}
+            for query in agency_queries:
                 wsids = list(agencies[agencies.alias == agency].customerId.values)
-                futures[query["name"]] = xctr.submit(kql2df, query["kql"], timespan, wsids)
-            agency_dframes = {name: future.result() for name, future in futures.items()}
-            agency_dframes["Agency Info"] = agencies[agencies.alias == agency]
-            zip_bytes = zip_dataframes(agency_dframes)
+                kql = load_kql(query["kql"])
+                futures[query["name"] + ".json"] = xctr.submit(kql2df, kql, timespan, wsids)
+                text_files[query["name"] + ".kql"] = kql
+            report_data = {name: future.result() for name, future in futures.items()}
+            domains = list_domains(agency)
+            runzero_query = " OR ".join([f'vhost:"%{domain}"' for domain in domains.split("\n")])
+            report_data["Internet Exposed Services.search.runzero"] = "# Export RunZero Services\n" + runzero_query
+            report_data["Internet Exposed Services.json"] = runzero2df({"search": runzero_query})
+            agency_info = agencies[agencies.alias == agency].copy()
+            agency_info["domains"] = domains
+            report_data["Agency Info.json"] = agency_info
+            report_data.update(text_files)
+            zip_bytes = zip_data(report_data)
             if agencies.alias.nunique() == 1:  # just return the zip data if theres only one agency
                 return zip_bytes
             logger.debug(f"Uploading {agency} zipped json to {jsonzip}")
             jsonzip.write_bytes(zip_bytes.getvalue()) # save the zip file
-        jsonzip, futures = path / "ALL_data.zip", {}
+        jsonzip, futures, text_files = path / "ALL_data.zip", {}, {}
         wsids = list_workspaces(OutputFormat.LIST)
         logger.debug("Querying runzero assets: ALL")
         response = httpx_api("runzero-v1.0").get("/export/org/assets.csv") # use csv as memory requirement is lower
         runzero_assets = pandas.read_csv(io.StringIO(response.text))
-        futures["Internet Exposed Assets"] = xctr.submit(lambda: runzero_assets)
+        futures["Internet Exposed Assets.json"] = xctr.submit(lambda: runzero_assets)
         for query in query_config.get("global_sentinel", []):
-            futures[query["name"]] = xctr.submit(kql2df, query["kql"], timespan, wsids)
+            kql = load_kql(query["kql"])
+            futures[query["name"] + ".json"] = xctr.submit(kql2df, kql, timespan, wsids)
+            text_files[query["name"] + ".kql"] = kql
         logger.debug(f"Zipping {jsonzip}")
-        zip_bytes = zip_dataframes({name: future.result() for name, future in futures.items()})
+        report_data = {name: future.result() for name, future in futures.items()}
+        report_data.update(text_files)
+        zip_bytes = zip_data(report_data)
         if agencies.shape[0] == 0: # return zip for all if no agencies
             return zip_bytes
         logger.debug(f"Uploading ALL zipped json to {jsonzip}")

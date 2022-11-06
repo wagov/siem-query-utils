@@ -82,7 +82,7 @@ class EspartoReport:
             self.agency_name = self.agency_info["Primary Agency"].max()
         self.load_templates(mdpath=template)
         if not query_cache:
-            query_cache = f"query_cache/{self.today.strftime('%Y-%m')}/{agency}_sentinel.zip"
+            query_cache = f"query_cache/{self.today.strftime('%Y-%m')}/{agency}_data.zip"
         self.queries = load_dataframes(self.path / query_cache)
         self.report = esparto.Page(title=self.report_title)
 
@@ -94,7 +94,8 @@ class EspartoReport:
         Report title set based on h1 title at top of document
         Sections split with a horizontal rule, and keys are set based on h2's.
         """
-        mdpath = self.path / mdpath
+        if isinstance(mdpath, str):
+            mdpath = self.path / mdpath
         if not mdpath.exists():
             logger.warning(f"Could not read template at {mdpath}")
             return
