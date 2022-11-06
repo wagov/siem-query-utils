@@ -7,6 +7,7 @@ import hmac
 import importlib
 import io
 import json
+import time
 import os
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
@@ -23,6 +24,7 @@ from cloudpathlib import AnyPath
 from dateutil.parser import isoparse
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Request, Response
 from fastapi.responses import PlainTextResponse, StreamingResponse
+from requests.exceptions import ReadTimeout
 
 from .azcli import azcli, cache, clean_path, logger, settings
 from .proxy import httpx_client
@@ -424,7 +426,7 @@ def load_dataframes(path: AnyPath) -> dict[pandas.DataFrame]:
     return obj
 
 
-def kql2df(kql: str, timespan: str, workspaces: list[str]) -> pandas.DataFrame:
+def kql2df(kql: str, timespan: str, workspaces: list[str], attempt=0, max_attempts=5) -> pandas.DataFrame:
     """
     Load data from Sentinel into a dataframe.
 
@@ -439,8 +441,15 @@ def kql2df(kql: str, timespan: str, workspaces: list[str]) -> pandas.DataFrame:
     table = kql.split("\n")[0].split(" ")[0].strip()
     try:
         data = analytics_query(workspaces=workspaces, query=kql, timespan=timespan)
-        assert (len(data)) > 0
+        assert data and (len(data)) > 0
         data = pandas.json_normalize(data, max_level=1)
+    except ReadTimeout as exc:
+        if attempt < max_attempts:
+            logger.warning(f"Timeout: {exc}, retrying...")
+            time.sleep(1 + attempt * 2)
+            return kql2df(kql, timespan, workspaces, attempt=attempt + 1, max_attempts=max_attempts)
+        else:
+            raise exc
     except Exception as exc:  # pylint: disable=broad-except
         logger.warning(f"{exc}: No data for {table} in {workspaces}")
         data = pandas.DataFrame.from_records([{f"{table}": f"No Data in timespan {timespan}"}])
@@ -518,10 +527,14 @@ def report_json_raw(query_config: dict, path: AnyPath, agencies: pandas.DataFram
             logger.debug(f"Uploading {agency} zipped json to {jsonzip}")
             jsonzip.write_bytes(zip_bytes.getvalue()) # save the zip file
         jsonzip, futures = path / "ALL_data.zip", {}
-        futures["Internet Exposed Services"] = xctr.submit(runzero2df)
         wsids = list_workspaces(OutputFormat.LIST)
+        logger.debug("Querying runzero assets: ALL")
+        response = httpx_api("runzero-v1.0").get("/export/org/assets.csv") # use csv as memory requirement is lower
+        runzero_assets = pandas.read_csv(io.StringIO(response.text))
+        futures["Internet Exposed Assets"] = xctr.submit(lambda: runzero_assets)
         for query in query_config.get("global_sentinel", []):
             futures[query["name"]] = xctr.submit(kql2df, query["kql"], timespan, wsids)
+        logger.debug(f"Zipping {jsonzip}")
         zip_bytes = zip_dataframes({name: future.result() for name, future in futures.items()})
         if agencies.shape[0] == 0: # return zip for all if no agencies
             return zip_bytes

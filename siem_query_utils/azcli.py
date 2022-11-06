@@ -275,7 +275,7 @@ def azcli(basecmd: list, attempt: int = 0, max_attempts: int = 5):
             raise Exception(f"Exceeded {max_attempts} CLI invocations") from exc
         logger.warning(f"CLI invocation failed: attempt {attempt}, retrying... ({exc})")
         time.sleep(1 + attempt * 2) # exponential backoff
-        return azcli(basecmd, attempt + 1)
+        return azcli(basecmd, attempt + 1, max_attempts)
     if cli.result.error:
         logger.warning(cli.result.error)
     return cli.result.result
