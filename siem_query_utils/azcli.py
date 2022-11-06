@@ -12,7 +12,7 @@ import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from string import Template
-from typing import Any
+from types import FunctionType
 
 import httpx_cache
 from azure.cli.core import get_default_cli
@@ -170,7 +170,7 @@ def bootstrap(_app_state: dict):
             "email_template": Template(
                 importlib.resources.read_text(f"{__package__}.templates", "email-template.html")
             ),
-            "datalake_path": get_blob_path(prefix, subscription),
+            "datalake_path": lambda: get_blob_path(prefix, subscription),
             "email_footer": os.environ.get(
                 "FOOTER_HTML", "Set FOOTER_HTML env var to configure this..."
             ),
@@ -178,7 +178,7 @@ def bootstrap(_app_state: dict):
             "data_collector_connstring": os.environ.get(
                 "AZMONITOR_DATA_COLLECTOR"
             ),  # kinda optional
-            "keyvault_session": load_session(boot(os.environ["KEYVAULT_SESSION_SECRET"]))
+            "keyvault_session": lambda: load_session(boot(os.environ["KEYVAULT_SESSION_SECRET"]))
             if "KEYVAULT_SESSION_SECRET" in os.environ
             else None,
             "sessions": {},
@@ -210,21 +210,25 @@ def login(refresh: bool = False):
             exit(loginstatus)
         app_state["logged_in"] = True
         app_state["login_time"] = datetime.utcnow()
-    else: # attempt interactive login
+    else:  # attempt interactive login
         while not app_state["logged_in"]:
             cli.invoke(["account", "show", "-o", "json"], out_file=open(os.devnull, "w"))
             if cli.result.result and "environmentName" in cli.result.result:
                 app_state["logged_in"] = True
                 app_state["login_time"] = datetime.utcnow()
             else:
-                cli.invoke(["login", "--tenant", os.environ["TENANT_ID"], "--use-device-code"], out_file=open(os.devnull, "w"))
+                cli.invoke(
+                    ["login", "--tenant", os.environ["TENANT_ID"], "--use-device-code"],
+                    out_file=open(os.devnull, "w"),
+                )
     # setup all other env vars
     bootstrap(app_state)
 
 
 def settings(key: str):
     """
-    Get a setting from the app state
+    Get a setting from the app state.
+    Lazily evaluates app state defined as functions and cache the results
 
     Args:
         key (str): setting key
@@ -236,6 +240,10 @@ def settings(key: str):
         login(refresh=True)
     elif not app_state["logged_in"]:
         login()
+    setting = app_state[key]
+    if isinstance(setting, FunctionType):
+        setting = setting()
+        app_state[key] = setting
     return app_state[key]
 
 

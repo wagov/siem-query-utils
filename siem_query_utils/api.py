@@ -9,7 +9,7 @@ import io
 import json
 import os
 import zipfile
-from concurrent.futures import ThreadPoolExecutor, wait
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from enum import Enum
 from mimetypes import guess_type
@@ -364,33 +364,44 @@ def summarise(blobpath: str, query: str = ExampleQuery, timespan: str = "P7D"):
     return len(results)
 
 
-def save_dataframes(obj: dict[pandas.DataFrame], path: AnyPath):
+def save_dataframes(path: AnyPath, obj: dict[pandas.DataFrame]):
     """
-    Writes a dictionary of dataframes to a path.
+    Writes a dictionary of dataframes to a path (as zipped json).
 
     Args:
-        obj (dict[pandas.DataFrame]): Dictionary of dataframes to write.
         path (AnyPath): Path to write to.
+        obj (dict[pandas.DataFrame]): Dictionary of dataframes to write.
     """
-    mem_zip = io.BytesIO()
-    with zipfile.ZipFile(mem_zip, "w", compression=zipfile.ZIP_DEFLATED) as mem_zipfile:
-        for name, dataframe in obj.items():
-            logger.debug(name)
-            if dataframe.shape[0] > 1:
-                dataframe = dataframe.loc[:, dataframe.nunique() > 1]  # throw out invariant columns
-            with mem_zipfile.open(
-                zipfile.ZipInfo(f"{name}.csv", date_time=datetime.now().timetuple()), "w"
-            ) as csv_file:
-                logger.debug(csv_file)
-                csv_file.write(dataframe.to_csv(index=False).encode("utf8"))
-    logger.debug(f"Uploading zipped csvs to {path}")
-    path.write_bytes(mem_zip.getvalue())
-    return mem_zip.getbuffer().nbytes
+    zip_bytes = io.BytesIO()
+    now = datetime.now().timetuple()
+    with zipfile.ZipFile(zip_bytes, "a") as zip_file:
+        for name, dframe in obj.items():
+            if dframe.shape[0] > 1:  # only analyse if there is more than one row
+                dframe = dframe.loc[
+                    :, (dframe != dframe.iloc[0]).any()
+                ]  # throw out invariant columns
+            dframe = dframe.convert_dtypes() # enhance fields where possible
+            for col, dtype in zip(dframe.columns, dframe.dtypes):
+                if dtype == "string":
+                    for timestr in ["seen", "updated", "created", "date", "time"]:
+                        if timestr in col.lower(): # enhance dates if possible
+                            try:
+                                dframe[col] = pandas.to_datetime(dframe[col])
+                            except pandas.errors.ParserError:
+                                pass
+                if dtype == 'object': # simplify nested objects
+                    dframe[col] = dframe[col].astype('string')
+            json_info = zipfile.ZipInfo(f"{name}.json", date_time=now)
+            json_str = dframe.convert_dtypes().to_json(orient="records")
+            zip_file.writestr(json_info, json_str, zipfile.ZIP_DEFLATED)
+    logger.debug(f"Uploading zipped json to {path}")
+    path.write_bytes(zip_bytes.getvalue())
+    return zip_bytes.getbuffer().nbytes
 
 
 def load_dataframes(path: AnyPath) -> dict[pandas.DataFrame]:
     """
-    Reads a zip file containing csv files into a dictionary of dataframes.
+    Reads a zip file containing json files into a dictionary of dataframes.
 
     Args:
         path (AnyPath): Path to zip file
@@ -402,9 +413,9 @@ def load_dataframes(path: AnyPath) -> dict[pandas.DataFrame]:
     obj = {}
     with zipfile.ZipFile(path, "r") as mem_zipfile:
         for name in mem_zipfile.namelist():
-            with mem_zipfile.open(name) as csv_file:
+            with mem_zipfile.open(name) as json_file:
                 logger.debug(name)
-                obj[name[:-4]] = pandas.read_csv(csv_file)
+                obj = pandas.read_json(json_file, orient="records")
     return obj
 
 
@@ -462,17 +473,17 @@ def runzero2df(agency=None) -> pandas.DataFrame:
         params = {"search": query}
     logger.debug(f"Querying runzero services: {params}")
     response = httpx_api("runzero-v1.0").get("/export/org/services.jsonl", params=params)
-    rows = [json.loads(line) for line in response.text.split("\n") if line]
+    rows = pandas.read_json(response.text, lines=True).to_dict(orient="records") # pylint: disable=no-member
     if len(rows) == 0:
-        dataframe = pandas.DataFrame.from_records(
+        dframe = pandas.DataFrame.from_records(
             [{"External Internet Services": f"No Data found for {domains}"}]
         )
     else:
-        dataframe = pandas.json_normalize(rows, max_level=1)
-    return dataframe
+        dframe = pandas.json_normalize(rows, max_level=1)
+    return dframe
 
 
-def report_csvs_raw(query_config: dict, path: AnyPath, agencies: pandas.DataFrame, timespan: str):
+def report_json_raw(query_config: dict, path: AnyPath, agencies: pandas.DataFrame, timespan: str):
     """
     Run a set of queries and save the results to a collection of zip files.
 
@@ -481,45 +492,28 @@ def report_csvs_raw(query_config: dict, path: AnyPath, agencies: pandas.DataFram
         path (AnyPath): Path to save zip files to.
         agencies (pandas.DataFrame): Dataframe of agencies to query.
         timespan (str): Timespan to query.
-
-    Raises:
-        csv.exception: If there is an error uploading to blob storage.
     """
     with ThreadPoolExecutor(max_workers=settings("max_threads")) as xctr:
-        futures = []  # target zip, csv name, future to a dataframe
         for agency in agencies.alias.unique():
-            csvzip = path / f"{agency}_data.zip"
-            futures.append((csvzip, "Internet Exposed Services", xctr.submit(runzero2df, agency)))
+            jsonzip, futures = path / f"{agency}_data.zip", {}
+            futures["Internet Exposed Services"] = xctr.submit(runzero2df, agency)
             for query in query_config.get("agency_sentinel", []):
                 wsids = list(agencies[agencies.alias == agency].customerId.values)
-                futures.append(
-                    (csvzip, query["name"], xctr.submit(kql2df, query["kql"], timespan, wsids))
-                )
-            csvzips = dict.fromkeys(list(zip(*futures))[0], {})
-            for csvzip, name, future in futures:
-                csvzips[csvzip][name] = future.result()
-            for zipname, dataframes in csvzips.items():
-                csvzips[zipname] = xctr.submit(save_dataframes, dataframes, zipname)
-            wait(csvzips.values())
-            futures = []
+                futures[query["name"]] = xctr.submit(kql2df, query["kql"], timespan, wsids)
+            agency_dframes = {name: future.result() for name, future in futures.items()}
+            agency_dframes["Agency Info"] = agencies[agencies.alias == agency]
+            save_dataframes(jsonzip, agency_dframes)
         agency = "ALL"
-        csvzip = path / f"{agency}_data.zip"
-        futures.append((csvzip, "Internet Exposed Services", xctr.submit(runzero2df)))
+        jsonzip, futures = path / f"{agency}_data.zip", {}
+        futures["Internet Exposed Services"] = xctr.submit(runzero2df)
         wsids = list_workspaces(OutputFormat.LIST)
         for query in query_config.get("global_sentinel", []):
-            futures.append(
-                (csvzip, query["name"], xctr.submit(kql2df, query["kql"], timespan, wsids))
-            )
-        csvzips = dict.fromkeys(list(zip(*futures))[0], {})
-        for csvzip, name, future in futures:
-            csvzips[csvzip][name] = future.result()
-        for zipname, dataframes in csvzips.items():
-            csvzips[zipname] = xctr.submit(save_dataframes, dataframes, zipname)
-        wait(csvzips.values())
+            futures[query["name"]] = xctr.submit(kql2df, query["kql"], timespan, wsids)
+        save_dataframes(jsonzip, {name: future.result() for name, future in futures.items()})
 
 
-@router.post("/collect_report_csvs")
-def collect_report_csvs(
+@router.post("/collect_report_json")
+def collect_report_json(
     tasks: BackgroundTasks,
     query_config: str = "notebooks/lists/report-queries.json",
     blobpath: str = "notebooks/query_cache",
@@ -527,13 +521,13 @@ def collect_report_csvs(
     limit: int = None,
 ):
     """
-    Collects csvs for a report. Queries are run in parallel and the results are saved to a zip file per agency.
+    Collects json for a report. Queries are run in parallel and the results are saved to a zip file per agency.
     The zip files are for use by the report generation notebook and by users who want an offline copy of the data.
 
     Args:
         tasks (BackgroundTasks): Background tasks executor.
         query_config (str, optional): Path to query config. Defaults to "notebooks/lists/report-queries.json".
-        blobpath (str, optional): Path to save query results (as zipped csvs) to. Defaults to "notebooks/query_cache".
+        blobpath (str, optional): Path to save query results (as zipped json) to. Defaults to "notebooks/query_cache".
         timespan (str, optional): Timespan to query. Defaults to "P30D".
         limit (int, optional): Limit the number of agencies to query (for testing). Defaults to None.
     - Step through config performing per agency and global queries
@@ -541,15 +535,15 @@ def collect_report_csvs(
     - Responses are parsed into dataframes, then compressed and uploaded to blob storage
     """
     query_config = datalake_json(query_config)
-    agencies = list_workspaces(fmt=OutputFormat.DF)[["customerId", "alias"]].dropna()[:limit]
+    agencies = list_workspaces(fmt=OutputFormat.DF).dropna(subset=["customerId", "alias"])[:limit]
     output_path = (
         settings("datalake_path") / clean_path(blobpath) / datetime.utcnow().strftime("%Y-%m")
     )
     for query in query_config.get("global_https", []):
         query["api"] = httpx_client(settings("keyvault_session")[f"proxy_{query['api']}"])
-    tasks.add_task(report_csvs_raw, query_config, output_path, agencies, timespan)
+    tasks.add_task(report_json_raw, query_config, output_path, agencies, timespan)
     return {
-        "agencies": agencies.to_dict("records"),
+        "agencies": agencies[["customerId", "alias"]].to_dict("records"),
         "total_queries": agencies.shape[0] * len(query_config.get("agency_sentinel", []))
         + len(query_config.get("global_sentinel", []))
         + len(query_config.get("global_https", [])),

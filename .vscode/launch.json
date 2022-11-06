@@ -10,7 +10,10 @@
             "request": "launch",
             "module": "uvicorn",
             "args": [
-                "siem_query_utils:app"
+                "siem_query_utils:app",
+                "--reload",
+                "--log-level",
+                "debug"
             ],
             "jinja": true,
             "justMyCode": true

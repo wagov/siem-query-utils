@@ -3,6 +3,7 @@ Main entry point for the CLI and uvicorn server
 """
 # pylint: disable=line-too-long
 import importlib
+from inspect import cleandoc
 import os
 from secrets import token_urlsafe
 from subprocess import Popen, run
@@ -15,7 +16,21 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from . import api, proxy, sentinel_beautify
 
-app = FastAPI(title="SIEM Query Utils API v2", version=importlib.metadata.version(__package__))
+app = FastAPI(
+    title="SIEM Query Utils API v2",
+    version=importlib.metadata.version(__package__),
+    description=cleandoc(
+        """
+        ## Welcome to SIEM Query Utils API v2
+        **[Code on Github](https://github.com/wagov/siem-query-utils)**.
+
+        Please see the local [JupyterLite](/main_path) instance as a convenient way to access the below apis.
+
+        - The below endpoints are convenient ways to query Azure Sentinel and Azure Log Analytics.
+        - The /proxy endpoint can be used to proxy certain requests to pre-authenticated origins.
+        """
+    ),
+)
 app.include_router(api.router, prefix="/api/v2", tags=["siem_query_utils"])
 app.include_router(sentinel_beautify.router, prefix="/api/v2", tags=["sentinel_beautify"])
 app.include_router(proxy.router, tags=["proxy"])
@@ -30,9 +45,9 @@ app.add_middleware(
 @app.get("/")
 def index():
     """
-    Redirect to /proxy/main_path
+    Redirect to /docs
     """
-    return RedirectResponse("/main_path")
+    return RedirectResponse("/docs")
 
 
 def atlaskit(execute=True):
@@ -40,7 +55,7 @@ def atlaskit(execute=True):
     launch node helper on port 3000 (handle running in a non interactive session for nvm/node access).
     """
     node_module = importlib.resources.path(f"{__package__}.js", "atlaskit-transformer.mjs")
-    cmd = [node_module.resolve()]
+    cmd = [node_module.resolve()]  # pylint: disable=no-member
     if execute:
         run(cmd, check=False)
     return cmd
