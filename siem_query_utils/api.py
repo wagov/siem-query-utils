@@ -561,7 +561,7 @@ def report_json_raw(query_config: dict, path: AnyPath, agencies: pandas.DataFram
 @router.post("/collect_report_json")
 def collect_report_json(
     tasks: BackgroundTasks,
-    query_config: str = "notebooks/lists/report-queries.json",
+    query_config: str = "notebooks/kql/report-queries.json",
     blobpath: str = "notebooks/query_cache",
     timespan: str = "P30D",
     agency: str = None,
