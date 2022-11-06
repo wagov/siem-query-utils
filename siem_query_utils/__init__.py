@@ -74,9 +74,7 @@ def serve():
         port=port,
         host=host,
         log_level=log_level,
-        proxy_headers=True,
-        reload=log_level == "debug",
-        workers=os.cpu_count() * 2 + 1,
+        proxy_headers=True
     )
     background_atlaskit.kill()
 

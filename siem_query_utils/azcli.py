@@ -253,12 +253,12 @@ def settings(key: str):
 def azcli(basecmd: list, attempt: int = 0, max_attempts: int = 5):
     """
     Run a general azure cli cmd with retries
-    
+
     Args:
         basecmd (list): base command to run
         attempt (int, optional): attempt number. Defaults to 0.
         max_attempts (int, optional): max attempts. Defaults to 5.
-        
+
     Returns:
         dict: json response from cli invocation
     """
