@@ -392,7 +392,7 @@ def save_dataframes(path: AnyPath, obj: dict[pandas.DataFrame]):
                 if dtype == 'object': # simplify nested objects
                     dframe[col] = dframe[col].astype('string')
             json_info = zipfile.ZipInfo(f"{name}.json", date_time=now)
-            json_str = dframe.convert_dtypes().to_json(orient="records")
+            json_str = dframe.convert_dtypes().to_json(orient="records", format_date="iso")
             zip_file.writestr(json_info, json_str, zipfile.ZIP_DEFLATED)
     logger.debug(f"Uploading zipped json to {path}")
     path.write_bytes(zip_bytes.getvalue())

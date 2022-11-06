@@ -167,6 +167,7 @@ def bootstrap(_app_state: dict):
             "datalake_subscription": subscription,
             "datalake_account": account,
             "datalake_container": container,
+            "datalake_sas": os.environ.get("DATALAKE_SAS", False),
             "email_template": Template(
                 importlib.resources.read_text(f"{__package__}.templates", "email-template.html")
             ),
@@ -288,6 +289,10 @@ def generatesas(
         str: SAS token
     """
     expiry = str(datetime.today().date() + timedelta(days=expiry_days))
+    if not (account and container and subscription):
+        account = settings("datalake_account")
+        container = settings("datalake_container")
+        subscription = settings("datalake_subscription")
     result = azcli(
         [
             "storage",
@@ -297,11 +302,11 @@ def generatesas(
             "login",
             "--as-user",
             "--account-name",
-            account or settings("datalake_account"),
+            account,
             "-n",
-            container or settings("datalake_container"),
+            container,
             "--subscription",
-            subscription or settings("datalake_subscription"),
+            subscription,
             "--permissions",
             permissions,
             "--expiry",
@@ -321,7 +326,10 @@ def get_blob_path(url: str, subscription: str = ""):
         return Path(clean_path(url))
     account, container = url.split("/")[2:]
     account = account.split(".")[0]
-    sas = generatesas(account, container, subscription)
+    if url == settings("datalake_blob_prefix") and settings("datalake_sas"):
+        sas = settings("datalake_sas") # use preset sas token if available
+    else:
+        sas = generatesas(account, container, subscription)
     blobclient = AzureBlobClient(
         blob_service_client=BlobServiceClient(
             account_url=url.replace(f"/{container}", ""), credential=sas
