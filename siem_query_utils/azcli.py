@@ -12,6 +12,7 @@ import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from string import Template
+import time
 from types import FunctionType
 
 import httpx_cache
@@ -249,19 +250,32 @@ def settings(key: str):
 
 
 @cache.memoize(ttl=60)
-def azcli(cmd: list):
-    "Run a general azure cli cmd, if as_df True return as dataframe"
+def azcli(basecmd: list, attempt: int = 0, max_attempts: int = 5):
+    """
+    Run a general azure cli cmd with retries
+    
+    Args:
+        basecmd (list): base command to run
+        attempt (int, optional): attempt number. Defaults to 0.
+        max_attempts (int, optional): max attempts. Defaults to 5.
+        
+    Returns:
+        dict: json response from cli invocation
+    """
     assert settings("logged_in")
-    cmd += ["--only-show-errors", "-o", "json"]
+    cmd = basecmd + ["--only-show-errors", "-o", "json"]
     cli = get_default_cli()
     for arg in cmd:
         assert isinstance(arg, str)
     logger.debug(" ".join(["az"] + cmd).replace("\n", " ").strip()[:160])
     try:
         cli.invoke(cmd, out_file=open(os.devnull, "w"))
-    except SystemExit as exc:
-        logger.error(exc)
-        return None
+    except (SystemExit, Exception) as exc: # pylint: disable=broad-except
+        if attempt >= max_attempts:
+            raise Exception(f"Exceeded {max_attempts} CLI invocations") from exc
+        logger.warning(f"CLI invocation failed: attempt {attempt}, retrying... ({exc})")
+        time.sleep(1 + attempt * 2) # exponential backoff
+        return azcli(basecmd, attempt + 1)
     if cli.result.error:
         logger.warning(cli.result.error)
     return cli.result.result
