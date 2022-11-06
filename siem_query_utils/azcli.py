@@ -174,7 +174,7 @@ def bootstrap(_app_state: dict):
             "email_footer": os.environ.get(
                 "FOOTER_HTML", "Set FOOTER_HTML env var to configure this..."
             ),
-            "max_threads": int(os.environ.get("MAX_THREADS", "20")),
+            "max_threads": int(os.environ.get("MAX_THREADS", "8")),
             "data_collector_connstring": os.environ.get(
                 "AZMONITOR_DATA_COLLECTOR"
             ),  # kinda optional
@@ -240,7 +240,7 @@ def settings(key: str):
 
 
 @cache.memoize(ttl=60)
-def azcli(cmd: list, error_result: Any = None):
+def azcli(cmd: list):
     "Run a general azure cli cmd, if as_df True return as dataframe"
     assert settings("logged_in")
     cmd += ["--only-show-errors", "-o", "json"]
@@ -248,13 +248,13 @@ def azcli(cmd: list, error_result: Any = None):
     for arg in cmd:
         assert isinstance(arg, str)
     logger.debug(" ".join(["az"] + cmd).replace("\n", " ").strip()[:160])
-    cli.invoke(cmd, out_file=open(os.devnull, "w"))
+    try:
+        cli.invoke(cmd, out_file=open(os.devnull, "w"))
+    except SystemExit as exc:
+        logger.error(exc)
+        return None
     if cli.result.error:
         logger.warning(cli.result.error)
-        if error_result is None:
-            raise cli.result.error
-        else:
-            return error_result
     return cli.result.result
 
 

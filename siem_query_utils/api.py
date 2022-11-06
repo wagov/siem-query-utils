@@ -122,20 +122,22 @@ def analytics_query(workspaces: list[str], query: str, timespan: str = "P7D", gr
         if len(workspaces) > 1:
             cmd += ["--workspaces"] + workspaces[1:]
         try:
-            return azcli(cmd, error_result="raise")  # big grouped query
+            return azcli(cmd)  # big grouped query
         except Exception as exc:  # pylint: disable=broad-except
             logger.warning(f"{exc}: falling back to individual queries")
     # run each query separately and stitch results, 20 at a time.
     results = []
     with ThreadPoolExecutor(max_workers=settings("max_threads")) as executor:
         futures = {
-            workspace: executor.submit(
-                azcli, cmd_base + ["--workspace", workspace], error_result=[]
-            )
+            workspace: executor.submit(azcli, cmd_base + ["--workspace", workspace])
             for workspace in workspaces
         }
         for workspace, future in futures.items():
-            result = future.result()
+            try:
+                result = future.result()
+            except Exception as exc:  # pylint: disable=broad-except
+                logger.warning(exc)
+                result = []
             for item in result:
                 item.update({"TenantId": workspace})
             results += result
@@ -373,11 +375,13 @@ def save_dataframes(obj: dict[pandas.DataFrame], path: AnyPath):
     mem_zip = io.BytesIO()
     with zipfile.ZipFile(mem_zip, "w", compression=zipfile.ZIP_DEFLATED) as mem_zipfile:
         for name, dataframe in obj.items():
+            logger.debug(name)
             if dataframe.shape[0] > 1:
                 dataframe = dataframe.loc[:, dataframe.nunique() > 1]  # throw out invariant columns
             with mem_zipfile.open(
                 zipfile.ZipInfo(f"{name}.csv", date_time=datetime.now().timetuple()), "w"
             ) as csv_file:
+                logger.debug(csv_file)
                 csv_file.write(dataframe.to_csv(index=False).encode("utf8"))
     logger.debug(f"Uploading zipped csvs to {path}")
     path.write_bytes(mem_zip.getvalue())
@@ -420,10 +424,11 @@ def kql2df(kql: str, timespan: str, workspaces: list[str]) -> pandas.DataFrame:
     try:
         data = analytics_query(workspaces=workspaces, query=kql, timespan=timespan)
         assert (len(data)) > 0
+        data = pandas.json_normalize(data, max_level=1)
     except Exception as exc:  # pylint: disable=broad-except
         logger.warning(f"{exc}: No data for {table} in {workspaces}")
-        data = [{f"{table}": f"No Data in timespan {timespan}"}]
-    return pandas.json_normalize(data, max_level=1)
+        data = pandas.DataFrame.from_records([{f"{table}": f"No Data in timespan {timespan}"}])
+    return data
 
 
 def httpx_api(apiname: str) -> httpx_cache.Client:
@@ -458,7 +463,12 @@ def runzero2df(agency=None) -> pandas.DataFrame:
     logger.debug(f"Querying runzero services: {params}")
     response = httpx_api("runzero-v1.0").get("/export/org/services.jsonl", params=params)
     rows = [json.loads(line) for line in response.text.split("\n") if line]
-    dataframe = pandas.json_normalize(rows, max_level=1)
+    if len(rows) == 0:
+        dataframe = pandas.DataFrame.from_records(
+            [{"External Internet Services": f"No Data found for {domains}"}]
+        )
+    else:
+        dataframe = pandas.json_normalize(rows, max_level=1)
     return dataframe
 
 
@@ -476,19 +486,30 @@ def report_csvs_raw(query_config: dict, path: AnyPath, agencies: pandas.DataFram
         csv.exception: If there is an error uploading to blob storage.
     """
     with ThreadPoolExecutor(max_workers=settings("max_threads")) as xctr:
-        futures = [] # target zip, csv name, future to a dataframe
+        futures = []  # target zip, csv name, future to a dataframe
         for agency in agencies.alias.unique():
             csvzip = path / f"{agency}_data.zip"
             futures.append((csvzip, "Internet Exposed Services", xctr.submit(runzero2df, agency)))
             for query in query_config.get("agency_sentinel", []):
                 wsids = list(agencies[agencies.alias == agency].customerId.values)
-                futures.append((csvzip, query["name"], xctr.submit(kql2df, query["kql"], timespan, wsids)))
+                futures.append(
+                    (csvzip, query["name"], xctr.submit(kql2df, query["kql"], timespan, wsids))
+                )
+            csvzips = dict.fromkeys(list(zip(*futures))[0], {})
+            for csvzip, name, future in futures:
+                csvzips[csvzip][name] = future.result()
+            for zipname, dataframes in csvzips.items():
+                csvzips[zipname] = xctr.submit(save_dataframes, dataframes, zipname)
+            wait(csvzips.values())
+            futures = []
+        agency = "ALL"
+        csvzip = path / f"{agency}_data.zip"
+        futures.append((csvzip, "Internet Exposed Services", xctr.submit(runzero2df)))
+        wsids = list_workspaces(OutputFormat.LIST)
         for query in query_config.get("global_sentinel", []):
-            agency = "ALL"
-            csvzip = path / f"{agency}_data.zip"
-            wsids = list_workspaces(OutputFormat.LIST)
-            futures.append((csvzip, "Internet Exposed Services", xctr.submit(runzero2df)))
-            futures.append((csvzip, query["name"], xctr.submit(kql2df, query["kql"], timespan, wsids)))
+            futures.append(
+                (csvzip, query["name"], xctr.submit(kql2df, query["kql"], timespan, wsids))
+            )
         csvzips = dict.fromkeys(list(zip(*futures))[0], {})
         for csvzip, name, future in futures:
             csvzips[csvzip][name] = future.result()
@@ -555,7 +576,16 @@ def export(
 
 
 @cache.memoize(ttl=60 * 60)
-def data_collector(target_workspace: str = None):
+def data_collector(target_workspace: str = None) -> tuple[str]:
+    """
+    Retreives credentials for a target workspace.
+
+    Args:
+        target_workspace (str, optional): Defaults to settings("datalake_collector_connstring").
+
+    Returns:
+        tuple[str] (customer_id, shared_key): workspace id and workspace key.
+    """
     if not target_workspace:
         target_workspace = settings("data_collector_connstring")
     else:
@@ -579,7 +609,9 @@ def data_collector(target_workspace: str = None):
 
 
 def upload_loganalytics_raw(rows, customer_id, shared_key, log_type):
-    # Build and send a request to the Log Analytics POST API
+    """
+    Uploads json log analytics data to a workspace.
+    """
     body = json.dumps(rows)  # dump new rows ready for upload
     method, content_type, resource = "POST", "application/json", "/api/logs"
     rfc1123date = datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT")
@@ -612,9 +644,10 @@ def upload_loganalytics_raw(rows, customer_id, shared_key, log_type):
 @router.post("/ingest")
 def upload_loganalytics(rows: list[dict], log_type: str, target_workspace: str = None):
     """
-    - Uploads a set of records to the {data_collector} workspace into table {log_type}_CL.
+    Uploads a set of records to the {data_collector} workspace into table {log_type}_CL.
     - Deduplicates against similar data for the past 7 days using a sha256 hash of the row.
-    - `target_workspace` is optional (will use env if not set), should be configured as {resourcegroup}/{workspacename} (subscription will be inferred from DATALAKE_SUBSCRIPTION)
+    - `target_workspace` is optional (will use env if not set), should be configured as {resourcegroup}/{workspacename}
+      (subscription will be inferred from DATALAKE_SUBSCRIPTION)
     """
     customer_id, shared_key = data_collector(target_workspace)
     try:
