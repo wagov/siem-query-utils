@@ -675,7 +675,7 @@ def papermill_report(
             logger.debug(f"{alias} report being generated...")
             try:
                 papermill.execute_notebook(tmpnb, None, params)
-                logger.debug(f"{agency} finished")
+                logger.debug(f"{alias} finished")
                 latest_reports.append(output_files)
             except Exception as exc:
                 logger.warning(exc)
