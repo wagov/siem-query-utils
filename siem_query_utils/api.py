@@ -11,7 +11,7 @@ import os
 import tempfile
 import time
 import zipfile
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import datetime
 from enum import Enum
 from mimetypes import guess_type
@@ -653,18 +653,17 @@ def papermill_report(
     title = load_templates(template)[0]
     notebook = (settings("datalake_path") / notebook).read_text()
     latest_json = settings("datalake_path") / "notebooks/reports/latest.json"
-    current_dir = Path.cwd()
-    futures = []
-    with ThreadPoolExecutor(max_workers=4) as executor:
+    with ThreadPoolExecutor(max_workers=int(settings("max_threads") / 2)) as executor:
+        futures = []
         for alias in (
-            list_workspaces(OutputFormat.DF).dropna(subset=["alias", "customerId"]).sort_values(by="alias").alias.unique()
+            list_workspaces(OutputFormat.DF)
+            .dropna(subset=["alias", "customerId"])
+            .sort_values(by="alias")
+            .alias.unique()
         ):
             if agency and agency != alias:
                 continue
-            with tempfile.TemporaryDirectory() as tmpdir:
-                tmpdir = Path(tmpdir)
-                os.chdir(tmpdir)
-                tmpnb = tmpdir / "report.ipynb"
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".ipynb", mode="wt") as tmpnb:
                 output_files = {
                     "agency": alias,
                     "links": [
@@ -672,16 +671,15 @@ def papermill_report(
                         f"{alias}/{datetime.utcnow().strftime('%Y-%m')} {title} Data ({alias}).zip",
                     ],
                 }
-                tmpnb.write_text(notebook)
+                tmpnb.write(notebook)
                 params = {"agency": alias, "template": template, "intro": intro}
-                logger.debug(f"{alias} report being generated...")
-                try:
-                    futures.append(executor.submit(papermill.execute_notebook, tmpnb, None, params))
-                    logger.debug(f"{alias} finished")
-                    latest_reports.append(output_files)
-                except Exception as exc:
-                    logger.warning(exc)
-                os.chdir(current_dir)
+            logger.debug(f"{alias} report being generated...")
+            futures.append(executor.submit(papermill.execute_notebook, tmpnb.name, None, params, progress_bar = False, report_mode = True))
+            latest_reports.append(output_files)
+        try:
+            wait(futures)
+        except Exception as exc:
+            logger.warning(exc)
     latest_json.write_text(json.dumps(latest_reports, indent=2))
     return latest_reports
 
