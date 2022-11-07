@@ -7,18 +7,21 @@ import hmac
 import importlib
 import io
 import json
-import time
 import os
+import tempfile
+import time
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from enum import Enum
 from mimetypes import guess_type
 from pathlib import Path
+from string import Template
 from typing import Optional
 
 import httpx_cache
 import pandas
+import papermill
 import requests
 from cloudpathlib import AnyPath
 from dateutil.parser import isoparse
@@ -480,7 +483,7 @@ def httpx_api(apiname: str) -> httpx_cache.Client:
     return httpx_client(settings("keyvault_session")["session"][f"proxy_{apiname}"])
 
 
-def runzero2df(params: dict = {}) -> pandas.DataFrame:
+def runzero2df(params: dict) -> pandas.DataFrame:
     """
     Get the runzero services for a given agency.
 
@@ -542,15 +545,19 @@ def report_json_raw(query_config: dict, path: AnyPath, agencies: pandas.DataFram
                 report_data["Internet Exposed Assets.json"] = runzero_assets
             else:
                 domains = list_domains(agency)
-                runzero_query = " OR ".join([f'vhost:"%{domain}"' for domain in domains.split("\n")])
+                runzero_query = " OR ".join(
+                    [f'vhost:"%{domain}"' for domain in domains.split("\n")]
+                )
                 report_data["Internet Exposed Services.search.runzero"] = (
                     "# Export RunZero Services\n" + runzero_query
                 )
-                report_data["Internet Exposed Services.json"] = runzero2df({"search": runzero_query})
+                report_data["Internet Exposed Services.json"] = runzero2df(
+                    {"search": runzero_query}
+                )
                 agency_info = agencies[agencies.alias == agency].copy()
                 agency_info["domains"] = domains
                 report_data["Agency Info.json"] = agency_info
-            zip_bytes = zip_data(report_data)   
+            zip_bytes = zip_data(report_data)
             logger.debug(f"Uploading {agency} zipped json to {jsonzip}")
             jsonzip.write_bytes(zip_bytes)  # save the zip file
             # return the zip data if theres only one agency
@@ -561,7 +568,7 @@ def report_json_raw(query_config: dict, path: AnyPath, agencies: pandas.DataFram
 @router.post("/collect_report_json")
 def collect_report_json(
     tasks: BackgroundTasks,
-    query_config: str = "notebooks/kql/report-queries.json",
+    query_config_path: str = "notebooks/wasoc-notebook/kql/report-queries.json",
     blobpath: str = "notebooks/query_cache",
     timespan: str = "P30D",
     agency: str = None,
@@ -572,7 +579,7 @@ def collect_report_json(
 
     Args:
         tasks (BackgroundTasks): Background tasks executor.
-        query_config (str, optional): Path to query config. Defaults to "notebooks/lists/report-queries.json".
+        query_config_path (str, optional): Path to the query config file. Defaults to "notebooks/wasoc-notebook/kql/report-queries.json".
         blobpath (str, optional): Path to save query results (as zipped json) to. Defaults to "notebooks/query_cache".
         timespan (str, optional): Timespan to query. Defaults to "P30D".
         agency (str, optional): Agency to return zip for synchronously. Defaults to None.
@@ -580,10 +587,8 @@ def collect_report_json(
     - Queries can either be log analytics or http api calls
     - Responses are parsed into dataframes, then compressed and uploaded to blob storage
     """
-    query_config = datalake_json(query_config)
-    query_config["kql_base"] = settings("datalake_path") / clean_path(
-        query_config.get("kql_base", "notebooks/kql")
-    )
+    query_config = datalake_json(query_config_path)
+    query_config["kql_base"] = (settings("datalake_path") / query_config_path).parent
     agencies = list_workspaces(fmt=OutputFormat.DF).dropna(subset=["customerId", "alias"])
     if agency:
         agencies = agencies[agencies.alias == agency]
@@ -608,6 +613,75 @@ def collect_report_json(
         + len(query_config.get("global_sentinel", []))
         + len(query_config.get("global_https", [])),
     }
+
+
+def load_templates(mdtemplate: str):
+    """
+    Reads a markdown file, and converts into a dictionary
+    of template fragments and a report title.
+
+    Report title set based on h1 title at top of document
+    Sections split with a horizontal rule, and keys are set based on h2's.
+    """
+    md_tmpls = mdtemplate.split("\n---\n\n")
+    md_tmpls = [tmpl.split("\n", 1) for tmpl in md_tmpls]
+    report_title = md_tmpls[0][0].replace("# ", "")
+    report_sections = {
+        title.replace("## ", ""): Template(content) for title, content in md_tmpls[1:]
+    }
+    return report_title, report_sections
+
+
+@router.post("/papermill_report")
+def papermill_report(
+    agency: str = None,
+    notebook: str = "notebooks/wasoc-notebook/report-monthly.ipynb",
+    template: str = "notebooks/wasoc-notebook/report-monthly.md",
+    intro: str = "wasocshared/tlp-green/reportcontent/soc-update.md",
+):
+    """
+    Runs a notebook with one or more agencies as context.
+
+    Args:
+        agency (str, optional): Agency to run notebook for. Defaults to None.
+        notebook (str, optional): Path to notebook to run. Defaults to "notebooks/report-monthly.ipynb".
+        template (str, optional): Path to template to use. Defaults to "notebooks/report-monthly.md".
+    """
+    latest_reports = []
+    template = (settings("datalake_path") / clean_path(template)).read_text()
+    intro = (settings("datalake_path") / clean_path(intro)).read_text()
+    title = load_templates(template)[0]
+    notebook = (settings("datalake_path") / notebook).read_text()
+    latest_json = settings("datalake_path") / "notebooks/reports/latest.json"
+    current_dir = Path.cwd()
+    for alias in (
+        list_workspaces(OutputFormat.DF).dropna(subset=["alias", "customerId"]).alias.unique()
+    ):
+        if agency and agency != alias:
+            continue
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir = Path(tmpdir)
+            os.chdir(tmpdir)
+            tmpnb = tmpdir / "report.ipynb"
+            output_files = {
+                "agency": alias,
+                "links": [
+                    f"{alias}/{datetime.utcnow().strftime('%Y-%m')} {title} ({alias}).pdf",
+                    f"{alias}/{datetime.utcnow().strftime('%Y-%m')} {title} Data ({alias}).zip",
+                ],
+            }
+            tmpnb.write_text(notebook)
+            params = {"agency": alias, "template": template, "intro": intro}
+            logger.debug(f"{alias} report being generated...")
+            try:
+                papermill.execute_notebook(tmpnb, None, params)
+                logger.debug(f"{agency} finished")
+                latest_reports.append(output_files)
+            except Exception as exc:
+                logger.warning(exc)
+            os.chdir(current_dir)
+    latest_json.write_text(json.dumps(latest_reports, indent=2))
+    return latest_reports
 
 
 @router.post("/export")

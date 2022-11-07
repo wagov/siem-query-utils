@@ -16,7 +16,7 @@ import tinycss2
 from cloudpathlib import AnyPath
 from IPython import display
 
-from .api import OutputFormat, load_dataframes, settings, list_workspaces
+from .api import OutputFormat, load_dataframes, settings, list_workspaces, load_templates
 from .azcli import clean_path, logger
 
 # Global default settings
@@ -32,7 +32,7 @@ seaborn.set_theme(
     },
 )
 
-
+    
 class EspartoReport:
     """
     Reporting helpers
@@ -45,7 +45,7 @@ class EspartoReport:
         self,
         agency: str,
         path: Union[Path, AnyPath] = None,
-        template: str = "markdown/report-sentinel.md",
+        template: str = None,
         background: str = "markdown/background.png",
         query_cache: str = None,
     ):
@@ -80,31 +80,13 @@ class EspartoReport:
         else:
             self.agency_info = wsdf[wsdf.alias == agency]
             self.agency_name = self.agency_info["Primary Agency"].max()
-        self.load_templates(mdpath=template)
+        if not template:
+            template = (settings("datalake_path") / clean_path("notebooks/wasoc-notebook/report-monthly.md")).read_text()
+        self.report_title, self.report_sections = load_templates(mdtemplate=template)
         if not query_cache:
             self.query_cache = self.path / f"query_cache/{self.today.strftime('%Y-%m')}/{agency}_data.zip"
         self.queries = load_dataframes(self.query_cache)
         self.report = esparto.Page(title=self.report_title)
-
-    def load_templates(self, mdpath: str):
-        """
-        Reads a markdown file, and converts into a dictionary
-        of template fragments and a report title.
-
-        Report title set based on h1 title at top of document
-        Sections split with a horizontal rule, and keys are set based on h2's.
-        """
-        if isinstance(mdpath, str):
-            mdpath = self.path / mdpath
-        if not mdpath.exists():
-            logger.warning(f"Could not read template at {mdpath}")
-            return
-        md_tmpls = mdpath.read_text().split("\n---\n\n")
-        md_tmpls = [tmpl.split("\n", 1) for tmpl in md_tmpls]
-        self.report_title = md_tmpls[0][0].replace("# ", "")
-        self.report_sections = {
-            title.replace("## ", ""): Template(content) for title, content in md_tmpls[1:]
-        }
 
     def init_report(self, table_of_contents=True, **css_params) -> esparto.Page:
         """
