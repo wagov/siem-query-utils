@@ -643,9 +643,9 @@ def papermill_report(
     Runs a notebook with one or more agencies as context.
 
     Args:
-        agency (str, optional): Agency to run notebook for. Defaults to None.
-        notebook (str, optional): Path to notebook to run. Defaults to "notebooks/report-monthly.ipynb".
-        template (str, optional): Path to template to use. Defaults to "notebooks/report-monthly.md".
+        - agency (str, optional): Agency to run notebook for. Defaults to None.
+        - notebook (str, optional): Path to notebook to run. Defaults to "notebooks/report-monthly.ipynb".
+        - template (str, optional): Path to template to use. Defaults to "notebooks/report-monthly.md".
     """
     latest_reports = []
     template = (settings("datalake_path") / clean_path(template)).read_text()
@@ -654,32 +654,34 @@ def papermill_report(
     notebook = (settings("datalake_path") / notebook).read_text()
     latest_json = settings("datalake_path") / "notebooks/reports/latest.json"
     current_dir = Path.cwd()
-    for alias in (
-        list_workspaces(OutputFormat.DF).dropna(subset=["alias", "customerId"]).alias.unique()
-    ):
-        if agency and agency != alias:
-            continue
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tmpdir = Path(tmpdir)
-            os.chdir(tmpdir)
-            tmpnb = tmpdir / "report.ipynb"
-            output_files = {
-                "agency": alias,
-                "links": [
-                    f"{alias}/{datetime.utcnow().strftime('%Y-%m')} {title} ({alias}).pdf",
-                    f"{alias}/{datetime.utcnow().strftime('%Y-%m')} {title} Data ({alias}).zip",
-                ],
-            }
-            tmpnb.write_text(notebook)
-            params = {"agency": alias, "template": template, "intro": intro}
-            logger.debug(f"{alias} report being generated...")
-            try:
-                papermill.execute_notebook(tmpnb, None, params)
-                logger.debug(f"{alias} finished")
-                latest_reports.append(output_files)
-            except Exception as exc:
-                logger.warning(exc)
-            os.chdir(current_dir)
+    futures = []
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        for alias in (
+            list_workspaces(OutputFormat.DF).dropna(subset=["alias", "customerId"]).sort_values(by="alias").alias.unique()
+        ):
+            if agency and agency != alias:
+                continue
+            with tempfile.TemporaryDirectory() as tmpdir:
+                tmpdir = Path(tmpdir)
+                os.chdir(tmpdir)
+                tmpnb = tmpdir / "report.ipynb"
+                output_files = {
+                    "agency": alias,
+                    "links": [
+                        f"{alias}/{datetime.utcnow().strftime('%Y-%m')} {title} ({alias}).pdf",
+                        f"{alias}/{datetime.utcnow().strftime('%Y-%m')} {title} Data ({alias}).zip",
+                    ],
+                }
+                tmpnb.write_text(notebook)
+                params = {"agency": alias, "template": template, "intro": intro}
+                logger.debug(f"{alias} report being generated...")
+                try:
+                    futures.append(executor.submit(papermill.execute_notebook, tmpnb, None, params))
+                    logger.debug(f"{alias} finished")
+                    latest_reports.append(output_files)
+                except Exception as exc:
+                    logger.warning(exc)
+                os.chdir(current_dir)
     latest_json.write_text(json.dumps(latest_reports, indent=2))
     return latest_reports
 
