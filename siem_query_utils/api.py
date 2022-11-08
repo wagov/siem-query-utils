@@ -583,10 +583,11 @@ def collect_report_json(
             continue
         filename = f"{alias}_data.zip"
         zip_file = settings("datalake_path") / f"{clean_path(blobpath)}/{date}/{filename}"
-        if (
-            zip_file.exists()
-            and (datetime.utcnow() - zip_file.stat().st_mtime).total_seconds() < max_age
-        ):
+        if zip_file.exists() and datetime.utcnow().timestamp() - zip_file.stat().st_mtime < max_age:
+            logger.debug(
+                f"Data {zip_file} exists, age:"
+                f" {datetime.utcnow().timestamp() - zip_file.stat().st_mtime} seconds"
+            )
             zip_bytes = zip_file.read_bytes()
         else:
             zip_bytes = report_zipjson(query_config, alias, timespan)
@@ -604,53 +605,51 @@ def collect_report_json(
 
 @router.post("/papermill_report")
 def papermill_report(
-    agency: str = "ALL", notebook: str = "wasoc-notebook/report-monthly.ipynb", max_age: int = 900
+    agency: str, notebook: str = "wasoc-notebook/report-monthly.ipynb", max_age: int = 900
 ):
     """
     Runs a notebook with one or more agencies as context.
 
     Args:
-        - agency (str, optional): Agency to run notebook for. Defaults to None.
+        - agency (str): Agency to run report for.
         - notebook (str, optional): Path to notebook to run. Defaults to "notebooks/report-monthly.ipynb".
         - template (str, optional): Path to template to use. Defaults to "notebooks/report-monthly.md".
     """
     latest_reports = []
-    nbpath = settings("datalake_path") / "notebooks"
-    notebook = (nbpath / notebook).read_text()
-    title = re.search(r"# ([\w\s]+)", notebook).group(1) # nab first header from notebook
+    report_path = settings("datalake_path") / "notebooks" / "reports"
+    localpath = Path(notebook).parent / "notebooks" / Path(notebook).name
+    if localpath.exists():
+        logger.debug(f"Local notebook {localpath} found, using that instead")
+        notebook = localpath.read_text()
+    else:
+        notebook = (report_path.parent / notebook).read_text()
+    title = re.search(r"# ([\w\s]+)", notebook).group(1)  # nab first header from notebook
     current_month = datetime.utcnow().strftime("%Y-%m")
-    futures = []
-    for alias in list_workspaces(OutputFormat.DF)["alias"].unique():
+    agencies = list_workspaces(fmt=OutputFormat.DF).dropna(subset=["alias"])
+    for alias in agencies["alias"].unique():
         report_pdf = f"{alias}/{current_month} {title} ({alias}).pdf"
         report_zip = f"{alias}/{current_month} {title} Data ({alias}).zip"
         output_files = {"agency": alias, "links": [report_pdf, report_zip]}
         latest_reports.append(output_files)
         if agency and agency != alias:
             continue
-        if report_pdf.exists() and report_zip.exists():
-            report_time = report_pdf.stat().st_mtime
-            if (datetime.utcnow() - report_time).total_seconds() < max_age:
-                continue
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".ipynb", mode="wt") as tmpnb:
-            tmpnb.write(notebook)
-            params = {
-                "agency": alias,
-                "report_pdf": f"{nbpath.name}/{report_pdf}",
-                "report_zip": f"{nbpath.name}/{report_zip}",
-            }
-        logger.debug(f"{alias} report being generated...")
-        futures.append(
-            submit(
-                papermill.execute_notebook,
-                tmpnb.name,
-                None,
-                params,
-                progress_bar=False,
-                report_mode=True,
+        if (report_path / report_pdf).exists() and (report_path / report_zip).exists():
+            report_time = (report_path / report_pdf).stat().st_mtime
+            logger.debug(
+                f"Report {report_pdf} exists, age:"
+                f" {datetime.utcnow().timestamp() - report_time} seconds"
             )
-        )
-    wait(futures)
-    (nbpath / "reports/latest.json").write_text(json.dumps(latest_reports, indent=2))
+            if datetime.utcnow().timestamp() - report_time > max_age:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".ipynb", mode="wt") as tmpnb:
+                    tmpnb.write(notebook)
+                    params = {
+                        "agency": alias,
+                        "report_pdf": f"{report_path.name}/{report_pdf}",
+                        "report_zip": f"{report_path.name}/{report_zip}",
+                    }
+                logger.debug(f"{alias} report being generated...")
+                papermill.execute_notebook(tmpnb.name, None, params)
+    (report_path / "latest.json").write_text(json.dumps(latest_reports, indent=2))
     return latest_reports
 
 

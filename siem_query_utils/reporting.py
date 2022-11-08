@@ -109,6 +109,9 @@ class EspartoReport:
                 self.path / f"query_cache/{self.today.strftime('%Y-%m')}/{agency}_data.zip"
             )
         self.queries = load_dataframes(self.query_cache)
+        self.query_cache_all = self.query_cache.parent / "ALL_data.zip"
+        if self.query_cache_all.exists() and self.query_cache != self.query_cache_all:
+            self.queries_all = load_dataframes(self.query_cache_all)
         self.report = esparto.Page(title=self.report_title)
         self.pdf = report_pdf
         self.zip = report_zip
