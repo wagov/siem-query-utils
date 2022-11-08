@@ -1,5 +1,5 @@
 {
-	"name": "Python 3.10 (Project)",
+	"name": "Python 3.10 SQU V2.0.0",
 	"image": "mcr.microsoft.com/devcontainers/python:3.10",
 	"features": {
 		"ghcr.io/devcontainers/features/github-cli": {},

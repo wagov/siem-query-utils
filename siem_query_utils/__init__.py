@@ -1,10 +1,9 @@
 """
 Main entry point for the CLI and uvicorn server
 """
-# pylint: disable=line-too-long
 import importlib
-from inspect import cleandoc
 import os
+from inspect import cleandoc
 from secrets import token_urlsafe
 from subprocess import Popen, run
 
@@ -15,6 +14,7 @@ from fire import Fire
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import api, proxy, sentinel_beautify
+from .azcli import configure_loop
 
 app = FastAPI(
     title="SIEM Query Utils API v2",
@@ -41,6 +41,8 @@ app.add_middleware(
     same_site="strict",
 )
 
+# Configures default executor including number of threads when running uvicorn
+app.on_event("startup")(configure_loop)
 
 @app.get("/")
 def index():
@@ -69,13 +71,7 @@ def serve():
     """
     background_atlaskit = Popen(atlaskit(execute=False), close_fds=True)
     host, port, log_level = "0.0.0.0", 8000, os.environ.get("LOG_LEVEL", "WARNING").lower()
-    uvicorn.run(
-        f"{__package__}:app",
-        port=port,
-        host=host,
-        log_level=log_level,
-        proxy_headers=True
-    )
+    uvicorn.run(f"{__package__}:app", port=port, host=host, log_level=log_level, proxy_headers=True)
     background_atlaskit.kill()
 
 

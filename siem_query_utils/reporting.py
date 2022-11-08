@@ -16,8 +16,8 @@ import tinycss2
 from cloudpathlib import AnyPath
 from IPython import display
 
-from .api import OutputFormat, load_dataframes, settings, list_workspaces, load_templates
-from .azcli import clean_path, logger
+from .api import OutputFormat, load_dataframes, settings, list_workspaces
+from .azcli import clean_path
 
 # Global default settings
 pandas.set_option("display.max_colwidth", None)
@@ -32,7 +32,24 @@ seaborn.set_theme(
     },
 )
 
-    
+
+def load_templates(mdtemplate: str):
+    """
+    Reads a markdown file, and converts into a dictionary
+    of template fragments and a report title.
+
+    Report title set based on h1 title at top of document
+    Sections split with a horizontal rule, and keys are set based on h2's.
+    """
+    md_tmpls = mdtemplate.split("\n---\n\n")
+    md_tmpls = [tmpl.split("\n", 1) for tmpl in md_tmpls]
+    report_title = md_tmpls[0][0].replace("# ", "")
+    report_sections = {
+        title.replace("## ", ""): Template(content) for title, content in md_tmpls[1:]
+    }
+    return report_title, report_sections
+
+
 class EspartoReport:
     """
     Reporting helpers
@@ -44,6 +61,8 @@ class EspartoReport:
     def __init__(
         self,
         agency: str,
+        report_pdf: str,
+        report_zip: str,
         path: Union[Path, AnyPath] = None,
         template: str = None,
         background: str = "markdown/background.png",
@@ -81,12 +100,18 @@ class EspartoReport:
             self.agency_info = wsdf[wsdf.alias == agency]
             self.agency_name = self.agency_info["Primary Agency"].max()
         if not template:
-            template = (settings("datalake_path") / clean_path("notebooks/wasoc-notebook/report-monthly.md")).read_text()
+            template = (
+                settings("datalake_path") / clean_path("notebooks/wasoc-notebook/report-monthly.md")
+            ).read_text()
         self.report_title, self.report_sections = load_templates(mdtemplate=template)
         if not query_cache:
-            self.query_cache = self.path / f"query_cache/{self.today.strftime('%Y-%m')}/{agency}_data.zip"
+            self.query_cache = (
+                self.path / f"query_cache/{self.today.strftime('%Y-%m')}/{agency}_data.zip"
+            )
         self.queries = load_dataframes(self.query_cache)
         self.report = esparto.Page(title=self.report_title)
+        self.pdf = report_pdf
+        self.zip = report_zip
 
     def init_report(self, table_of_contents=True, **css_params) -> esparto.Page:
         """
@@ -124,13 +149,9 @@ class EspartoReport:
         return self.report
 
     def report_pdf(self, preview=True, savehtml=False):
-        report_dir = self.path / f"reports/{self.agency}"
-        report_dir.mkdir(parents=True, exist_ok=True)
-
-        filename = f"{self.today.strftime('%Y-%m')} {self.report_title} ({self.agency}).pdf"
-        pdf_file = report_dir / clean_path(filename)
-        data_file = pdf_file.with_suffix(".zip")
-        data_file = data_file.with_name(data_file.name.replace("Report", "Report Data"))
+        pdf_file = self.path / self.pdf
+        data_file = self.path / self.zip
+        pdf_file.parent.mkdir(parents=True, exist_ok=True)
         data_file.write_bytes(self.query_cache.read_bytes())
         with tempfile.NamedTemporaryFile(mode="w+b", suffix=".pdf") as pdf_file_tmp:
             html = self.report.save_pdf(pdf_file_tmp, return_html=True)

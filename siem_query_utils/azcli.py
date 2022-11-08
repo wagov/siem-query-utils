@@ -1,19 +1,21 @@
 """
 Azure CLI helpers and core functions
 """
-# pylint: disable=logging-fstring-interpolation, unspecified-encoding, line-too-long
-
+# pylint: disable=logging-fstring-interpolation, unspecified-encoding
+import asyncio
 import base64
+import functools
 import hashlib
 import importlib
 import json
 import logging
 import os
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from string import Template
-import time
 from types import FunctionType
+from concurrent.futures import ThreadPoolExecutor
 
 import httpx_cache
 from azure.cli.core import get_default_cli
@@ -142,6 +144,35 @@ def clean_path(path: str) -> str:
     return sanitize_filepath(path.replace("..", ""), platform="auto")
 
 
+def configure_loop():
+    """
+    Configure shared background threads for all async functions
+    
+    Uses uvicorns default loop with a fallback to creating a new loop
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+    app_state["executor"] = ThreadPoolExecutor(max_workers=int(os.environ.get("MAX_THREADS", 8)))
+    loop.set_default_executor(app_state["executor"])
+
+def submit(func, *args, **kwargs):
+    """
+    Submit a function to the default loop executor
+    
+    Args:
+        func (function): function to run
+        *args: function arguments
+        **kwargs: function keyword arguments
+        
+    Returns:
+        asyncio.Future: future object
+    """
+    if "executor" not in app_state:
+        configure_loop()
+    return app_state["executor"].submit(func, *args, **kwargs)
+
 def bootstrap(_app_state: dict):
     """
     Load app state from env vars or dotenv
@@ -176,7 +207,6 @@ def bootstrap(_app_state: dict):
             "email_footer": os.environ.get(
                 "FOOTER_HTML", "Set FOOTER_HTML env var to configure this..."
             ),
-            "max_threads": int(os.environ.get("MAX_THREADS", "8")),
             "data_collector_connstring": os.environ.get(
                 "AZMONITOR_DATA_COLLECTOR"
             ),  # kinda optional
@@ -270,11 +300,11 @@ def azcli(basecmd: list, attempt: int = 0, max_attempts: int = 5):
     logger.debug(" ".join(["az"] + cmd).replace("\n", " ").strip()[:160])
     try:
         cli.invoke(cmd, out_file=open(os.devnull, "w"))
-    except (SystemExit, Exception) as exc: # pylint: disable=broad-except
+    except (SystemExit, Exception) as exc:  # pylint: disable=broad-except
         if attempt >= max_attempts:
             raise Exception(f"Exceeded {max_attempts} CLI invocations") from exc
         logger.warning(f"CLI invocation failed: attempt {attempt}, retrying... ({exc})")
-        time.sleep(1 + attempt * 2) # exponential backoff
+        time.sleep(1 + attempt * 2)  # exponential backoff
         return azcli(basecmd, attempt + 1, max_attempts)
     if cli.result.error:
         logger.warning(cli.result.error)
@@ -341,7 +371,7 @@ def get_blob_path(url: str, subscription: str = ""):
     account, container = url.split("/")[2:]
     account = account.split(".")[0]
     if url == settings("datalake_blob_prefix") and settings("datalake_sas"):
-        sas = settings("datalake_sas") # use preset sas token if available
+        sas = settings("datalake_sas")  # use preset sas token if available
     else:
         sas = generatesas(account, container, subscription)
     blobclient = AzureBlobClient(
