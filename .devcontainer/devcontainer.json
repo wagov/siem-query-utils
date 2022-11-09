@@ -12,9 +12,7 @@
 		"codespaces": {
 			"repositories": {
 				"wagov/*": {
-					"permissions": {
-						"permissions": "write-all"
-					}
+					"permissions": "write-all"
 				}
 			}
 		},
