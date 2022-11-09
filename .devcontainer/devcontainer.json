@@ -9,15 +9,6 @@
 		"cpus": 4
 	},
 	"customizations": {
-		"codespaces": {
-			"repositories": {
-				"wagov/wasoc-notebook": {
-					"permissions": {
-						"permissions": "write-all"
-					}
-				}
-			}
-		},
 		"vscode": {
 			"extensions": [
 				"ms-python.python",
