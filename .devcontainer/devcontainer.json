@@ -11,7 +11,7 @@
 	"customizations": {
 		"codespaces": {
 			"repositories": {
-				"wagov/wasoc-notebook": {
+				"wagov/*": {
 					"permissions": {
 						"permissions": "write-all"
 					}
