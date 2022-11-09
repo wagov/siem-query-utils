@@ -113,8 +113,12 @@ class EspartoReport:
         if self.query_cache_all.exists() and self.query_cache != self.query_cache_all:
             self.queries_all = load_dataframes(self.query_cache_all)
         self.report = esparto.Page(title=self.report_title)
-        self.pdf = report_pdf
-        self.zip = report_zip
+        if report_pdf and report_zip:
+            self.pdf = self.path / report_pdf
+            self.zip = self.path / report_zip
+        else:
+            self.pdf = Path(tempfile.NamedTemporaryFile(suffix="report.pdf", delete=False).name)
+            self.zip = Path(tempfile.NamedTemporaryFile(suffix="report_data.zip", delete=False).name)
 
     def init_report(self, table_of_contents=True, **css_params) -> esparto.Page:
         """
@@ -152,22 +156,20 @@ class EspartoReport:
         return self.report
 
     def report_pdf(self, preview=True, savehtml=False):
-        pdf_file = self.path / self.pdf
-        data_file = self.path / self.zip
-        pdf_file.parent.mkdir(parents=True, exist_ok=True)
-        data_file.write_bytes(self.query_cache.read_bytes())
+        self.pdf.parent.mkdir(parents=True, exist_ok=True)
+        self.zip.write_bytes(self.query_cache.read_bytes())
         with tempfile.NamedTemporaryFile(mode="w+b", suffix=".pdf") as pdf_file_tmp:
             html = self.report.save_pdf(pdf_file_tmp, return_html=True)
             pdf_file_tmp.seek(0)
-            pdf_file.write_bytes(pdf_file_tmp.read())
+            self.pdf.write_bytes(pdf_file_tmp.read())
 
         if savehtml:
-            pdf_file.with_suffix(".html").write_text(html)
+            self.pdf.with_suffix(".html").write_text(html)
 
         if preview:
-            return display.IFrame(pdf_file, width=1200, height=800)
+            return display.IFrame(self.pdf, width=1200, height=800)
         else:
-            return pdf_file
+            return self.pdf
 
     def rename_and_sort(self, df, names, rows=40, cols=40):
         # Rename columns based on dict

@@ -617,6 +617,7 @@ def papermill_report(
     """
     latest_reports = []
     report_path = settings("datalake_path") / "notebooks" / "reports"
+    notebook = clean_path(notebook)
     localpath = Path(notebook).parent / "notebooks" / Path(notebook).name
     if localpath.exists():
         logger.debug(f"Local notebook {localpath} found, using that instead")
