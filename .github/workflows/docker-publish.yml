@@ -87,3 +87,11 @@ jobs:
         # This step uses the identity token to provision an ephemeral certificate
         # against the sigstore community Fulcio instance.
         run: cosign sign ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-and-push.outputs.digest }}
+      
+      
+      - uses: azure/webapps-deploy@v2
+        if: ${{ github.event_name != 'pull_request' }}
+        with:
+          app-name: '${{ secrets.AZURE_WEBAPP_NAME }}'
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          images: '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-and-push.outputs.digest }}'
