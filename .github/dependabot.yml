@@ -5,7 +5,15 @@
 
 version: 2
 updates:
-  - package-ecosystem: "pip" # See documentation for possible values
+  - package-ecosystem: "pip" # Monitor poetry.toml (Python 3)
+    directory: "/" # Location of package manifests
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "npm" # Monitor package.lock (Node 19)
+    directory: "/" # Location of package manifests
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "github-actions" # Monitor .github/workflows github actions
     directory: "/" # Location of package manifests
     schedule:
       interval: "weekly"
