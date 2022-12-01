@@ -551,7 +551,7 @@ def report_zipjson(query_config: dict, agency: str, timespan: str):
 def collect_report_json(
     query_config_path: str = "notebooks/wasoc-notebook/kql/report-queries.json",
     blobpath: str = "notebooks/query_cache",
-    timespan: str = "P30D",
+    timespan: str = "P45D",
     agency: str = "ALL",
     max_age: int = 900,
 ):
@@ -562,7 +562,7 @@ def collect_report_json(
     Args:
         query_config_path (str, optional): Path to the query config file. Defaults to "notebooks/wasoc-notebook/kql/report-queries.json".
         blobpath (str, optional): Path to save query results (as zipped json) to. Defaults to "notebooks/query_cache".
-        timespan (str, optional): Timespan to query. Defaults to "P30D".
+        timespan (str, optional): Timespan to query. Defaults to "P45D".
         agency (str, optional): Agency to return zip for synchronously. Defaults to None.
         max_stale (int, optional): Max age of cached data in seconds. Defaults to 900.
     - Step through config performing per agency and global queries
@@ -578,7 +578,7 @@ def collect_report_json(
     if agency != "ALL" and agency not in agencies["alias"].values:
         raise HTTPException(status_code=404, detail=f"Agency {agency} not found")
     latest_data = []
-    for alias in agencies["alias"].unique():
+    for alias in list(agencies["alias"].unique()) + ["ALL"]:
         if agency != "ALL" and agency != alias:
             continue
         filename = f"{alias}_data.zip"
@@ -640,16 +640,17 @@ def papermill_report(
                 f"Report {report_pdf} exists, age:"
                 f" {datetime.utcnow().timestamp() - report_time} seconds"
             )
-            if datetime.utcnow().timestamp() - report_time > max_age:
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".ipynb", mode="wt") as tmpnb:
-                    tmpnb.write(notebook)
-                    params = {
-                        "agency": alias,
-                        "report_pdf": f"{report_path.name}/{report_pdf}",
-                        "report_zip": f"{report_path.name}/{report_zip}",
-                    }
-                logger.debug(f"{alias} report being generated...")
-                papermill.execute_notebook(tmpnb.name, None, params)
+            if datetime.utcnow().timestamp() - report_time < max_age:
+                continue
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".ipynb", mode="wt") as tmpnb:
+            tmpnb.write(notebook)
+            params = {
+                "agency": alias,
+                "report_pdf": f"{report_path.name}/{report_pdf}",
+                "report_zip": f"{report_path.name}/{report_zip}",
+            }
+        logger.debug(f"{alias} report being generated...")
+        papermill.execute_notebook(tmpnb.name, None, params)
     (report_path / "latest.json").write_text(json.dumps(latest_reports, indent=2))
     return latest_reports
 
