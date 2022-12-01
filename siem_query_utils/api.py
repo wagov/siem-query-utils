@@ -605,7 +605,7 @@ def collect_report_json(
 
 @router.post("/papermill_report")
 def papermill_report(
-    agency: str, notebook: str = "wasoc-notebook/report-monthly.ipynb", max_age: int = 900
+    agency: str = "ALL", notebook: str = "wasoc-notebook/report-monthly.ipynb", max_age: int = 900
 ):
     """
     Runs a notebook with one or more agencies as context.
@@ -627,12 +627,13 @@ def papermill_report(
     title = re.search(r"# ([\w\s]+)", notebook).group(1)  # nab first header from notebook
     current_month = datetime.utcnow().strftime("%Y-%m")
     agencies = list_workspaces(fmt=OutputFormat.DF).dropna(subset=["alias"])
-    for alias in agencies["alias"].unique():
+    for alias in list(agencies["alias"].unique()) + ["ALL"]:
         report_pdf = f"{alias}/{current_month} {title} ({alias}).pdf"
         report_zip = f"{alias}/{current_month} {title} Data ({alias}).zip"
         output_files = {"agency": alias, "links": [report_pdf, report_zip]}
         latest_reports.append(output_files)
-        if agency and agency != alias:
+        if agency and agency != alias and agency != "ALL":
+            # only process one agency unless agency is ALL
             continue
         if (report_path / report_pdf).exists() and (report_path / report_zip).exists():
             report_time = (report_path / report_pdf).stat().st_mtime
