@@ -622,7 +622,7 @@ def papermill_report(
         - notebook (str, optional): Path to notebook to run. Defaults to "notebooks/report-monthly.ipynb".
         - template (str, optional): Path to template to use. Defaults to "notebooks/report-monthly.md".
     """
-    latest_reports = []
+    latest_reports, errors = [], []
     report_path = settings("datalake_path") / "notebooks" / "reports"
     notebook = clean_path(notebook)
     localpath = Path(notebook).parent / "notebooks" / Path(notebook).name
@@ -658,8 +658,17 @@ def papermill_report(
                 "report_zip": f"{report_path.name}/{report_zip}",
             }
         logger.debug(f"{alias} report being generated...")
-        papermill.execute_notebook(tmpnb.name, None, params)
+        try:
+            papermill.execute_notebook(tmpnb.name, None, params)
+        except Exception as exc:
+            attempted = latest_reports.pop()
+            attempted["error"] = str(exc)
+            errors.append(attempted)
     (report_path / "latest.json").write_text(json.dumps(latest_reports, indent=2))
+    if errors:
+        (report_path / "errors.json").write_text(json.dumps(errors, indent=2))
+        if agency != "ALL":
+            return errors
     return latest_reports
 
 
