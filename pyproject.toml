@@ -27,7 +27,7 @@ cacheout = "^0.14.1"
 markdown = "^3.4.1"
 flatten-json = "^0.1.13"
 pathvalidate = "^2.5.2"
-httpx-cache = "^0.6.1"
+httpx-cache = "^0.7.0"
 cloudpathlib = { extras = ["azure"], version = "^0.10.0" }
 azure-storage-blob = "^12.14.1"
 pandas = "^1.5.1"
