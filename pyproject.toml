@@ -20,7 +20,7 @@ packages = [{ include = "siem_query_utils" }]
 
 [tool.poetry.dependencies]
 python = "^3.10"
-azure-cli = "^2.42.0"
+azure-cli = "^2.43.0"
 fastapi = { extras = ["all"], version = "^0.88.0" }
 fire = "^0.4.0"
 cacheout = "^0.14.1"
@@ -35,10 +35,10 @@ poetryup = "^0.12.5"
 seaborn = "^0.12.1"
 esparto = "^4.2.0"
 tinycss2 = "^1.2.1"
-jupyterlab = "^3.5.0"
+jupyterlab = "^3.5.1"
 jupyter = "^1.0.0"
 python-dotenv = "^0.21.0"
-pylint = "^2.15.7"
+pylint = "^2.15.8"
 weasyprint = "^57.1"
 openpyxl = "^3.0.10"
 papermill = "^2.4.0"
