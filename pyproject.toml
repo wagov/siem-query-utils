@@ -12,7 +12,7 @@ enable = ["logging-format-interpolation"]
 
 [tool.poetry]
 name = "siem-query-utils"
-version = "2.0.0"
+version = "2.0.1"
 description = ""
 authors = ["Adon Metcalfe <adonm@fastmail.fm>"]
 readme = "README.md"

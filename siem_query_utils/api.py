@@ -9,10 +9,10 @@ import io
 import json
 import os
 import re
+import shlex
 import tempfile
 import time
 import zipfile
-from concurrent.futures import wait
 from datetime import datetime
 from enum import Enum
 from mimetypes import guess_type
@@ -44,6 +44,7 @@ class OutputFormat(str, Enum):
     CSV = "csv"
     LIST = "list"
     DF = "df"
+    CMD = "cmd"
 
 
 @router.get("/datalake/{path:path}")
@@ -110,7 +111,7 @@ def load_kql(query: str) -> str:
     return query
 
 
-def analytics_query(workspaces: list[str], query: str, timespan: str = "P7D", group_queries=True):
+def analytics_query(workspaces: list[str], query: str, timespan: str = "P7D", group_queries=True, dry_run=False):
     "Queries a list of workspaces using kusto"
     query = load_kql(query)
     cmd_base = [
@@ -122,10 +123,12 @@ def analytics_query(workspaces: list[str], query: str, timespan: str = "P7D", gr
         "--timespan",
         timespan,
     ]
-    if group_queries or len(workspaces) == 1:
+    if group_queries or len(workspaces) == 1 or dry_run:
         cmd = cmd_base + ["--workspace", workspaces[0]]
         if len(workspaces) > 1:
             cmd += ["--workspaces"] + workspaces[1:]
+        if dry_run:
+            return shlex.join(["az"] + cmd)
         try:
             return azcli(cmd)  # big grouped query
         except Exception as exc:  # pylint: disable=broad-except
@@ -336,6 +339,9 @@ def query_all(
     """
     Query all workspaces from `/listWorkspaces` using kusto.
     """
+    if fmt == OutputFormat.CMD:
+        cmd = analytics_query(list_workspaces(), query, timespan, group_queries=group_queries, dry_run=True)
+        return PlainTextResponse(content=cmd)
     results = analytics_query(list_workspaces(), query, timespan, group_queries=group_queries)
     if fmt == OutputFormat.JSON:
         return results
@@ -560,7 +566,8 @@ def collect_report_json(
     The zip files are for use by the report generation notebook and by users who want an offline copy of the data.
 
     Args:
-        query_config_path (str, optional): Path to the query config file. Defaults to "notebooks/wasoc-notebook/kql/report-queries.json".
+        query_config_path (str, optional): Path to the query config file.
+            Defaults to "notebooks/wasoc-notebook/kql/report-queries.json".
         blobpath (str, optional): Path to save query results (as zipped json) to. Defaults to "notebooks/query_cache".
         timespan (str, optional): Timespan to query. Defaults to "P45D".
         agency (str, optional): Agency to return zip for synchronously. Defaults to None.
