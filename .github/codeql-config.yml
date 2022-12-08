@@ -1,2 +1,5 @@
 paths:
   - siem_query_utils
+paths-ignore:
+  - .venv
+  - node_modules
