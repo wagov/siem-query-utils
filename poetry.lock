@@ -2037,19 +2037,19 @@ socks = ["socksio (>=1.0.0,<2.0.0)"]
 
 [[package]]
 name = "httpx-cache"
-version = "0.6.1"
+version = "0.7.0"
 description = "Simple caching transport for httpx."
 category = "main"
 optional = false
-python-versions = ">=3.7,<4.0"
+python-versions = ">=3.7"
 
 [package.dependencies]
-aiorwlock = ">=1.2.0,<2.0.0"
-anyio = ">=3.4.0,<4.0.0"
-attrs = ">=21.4.0,<22.0.0"
+aiorwlock = ">=1.2,<2.0"
+anyio = ">=3.0,<4.0"
+attrs = ">=21.4,<23.0"
 fasteners = ">=0.16.3,<0.18.0"
-httpx = ">=0.23.0,<0.24.0"
-msgpack = ">=1.0.3,<2.0.0"
+httpx = ">=0.23,<1.0"
+msgpack = ">=1.0,<2.0"
 
 [[package]]
 name = "humanfriendly"
@@ -3962,7 +3962,7 @@ test = ["pytest"]
 [metadata]
 lock-version = "1.1"
 python-versions = "^3.10"
-content-hash = "026c77c53a87bf373da08eceff744a0c6ee5fadb741c57eb0554f3819890fab2"
+content-hash = "2f6812adddd67aa43f2a8e1b9d3f4a2f4bbda65a323e48244b7a99f4d67b0083"
 
 [metadata.files]
 adal = [
@@ -4939,8 +4939,8 @@ httpx = [
     {file = "httpx-0.23.0.tar.gz", hash = "sha256:f28eac771ec9eb4866d3fb4ab65abd42d38c424739e80c08d8d20570de60b0ef"},
 ]
 httpx-cache = [
-    {file = "httpx-cache-0.6.1.tar.gz", hash = "sha256:699f648e781f6d06c9f50fa398f7ae30fe5b7668711975760d277f14c601d124"},
-    {file = "httpx_cache-0.6.1-py3-none-any.whl", hash = "sha256:b468b9f3d8d8063d3a0f401401cfd5237e37721f975c436598e4e62fd1f5685c"},
+    {file = "httpx_cache-0.7.0-py3-none-any.whl", hash = "sha256:84af9c52458b5c38784f694179913233aa7a8f3eb327045497927f9449647618"},
+    {file = "httpx_cache-0.7.0.tar.gz", hash = "sha256:d65df5633e9b295beeee41ca338d6394bb7f9ea4a83497a788984c88c367d76e"},
 ]
 humanfriendly = [
     {file = "humanfriendly-10.0-py2.py3-none-any.whl", hash = "sha256:1697e1a8a8f550fd43c2865cd84542fc175a61dcb779b6fee18cf6b6ccba1477"},
