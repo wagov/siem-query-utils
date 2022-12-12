@@ -9,7 +9,7 @@
   "dependencies": {
     "@atlaskit/editor-json-transformer": "^8.8.2",
     "@atlaskit/editor-markdown-transformer": "^4.2.16",
-    "@atlaskit/editor-wikimarkup-transformer": "^11.1.9",
+    "@atlaskit/editor-wikimarkup-transformer": "^11.1.10",
     "fastify": "^4.10.2"
   }
 }
