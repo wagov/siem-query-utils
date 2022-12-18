@@ -4,7 +4,6 @@ Azure CLI helpers and core functions
 # pylint: disable=logging-fstring-interpolation, unspecified-encoding
 import asyncio
 import base64
-import functools
 import hashlib
 import importlib
 import json
@@ -27,7 +26,9 @@ from fastapi import HTTPException
 from pathvalidate import sanitize_filepath
 from uvicorn.config import Config
 
-load_dotenv()
+local_env = Path(".env")
+if local_env.exists():
+    load_dotenv(dotenv_path=local_env)
 
 
 # Steal uvicorns logger config
@@ -147,7 +148,7 @@ def clean_path(path: str) -> str:
 def configure_loop():
     """
     Configure shared background threads for all async functions
-    
+
     Uses uvicorns default loop with a fallback to creating a new loop
     """
     try:
@@ -160,12 +161,12 @@ def configure_loop():
 def submit(func, *args, **kwargs):
     """
     Submit a function to the default loop executor
-    
+
     Args:
         func (function): function to run
         *args: function arguments
         **kwargs: function keyword arguments
-        
+
     Returns:
         asyncio.Future: future object
     """
@@ -195,7 +196,8 @@ def bootstrap(_app_state: dict):
     account, container = prefix.split("/")[2:]
     _app_state.update(
         {
-            "datalake_blob_prefix": prefix,  # e.g. "https://{datalake_account}.blob.core.windows.net/{datalake_container}"
+            # datalake_blob_prefix example: "https://{datalake_account}.blob.core.windows.net/{datalake_container}"
+            "datalake_blob_prefix": prefix,
             "datalake_subscription": subscription,
             "datalake_account": account,
             "datalake_container": container,

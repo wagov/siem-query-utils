@@ -1,6 +1,9 @@
 {
 	"name": "Python 3.10 SQU V2.0.0",
-	"image": "mcr.microsoft.com/devcontainers/python:3.10",
+	"build": {
+		"dockerfile": "../Dockerfile",
+		"cacheFrom": " ghcr.io/wagov/siem-query-utils:latest"
+	},
 	"features": {
 		"ghcr.io/devcontainers/features/github-cli": {},
 		"ghcr.io/devcontainers/features/docker-in-docker": {}
@@ -27,11 +30,6 @@
 			]
 		}
 	},
-	"onCreateCommand": [
-		"/bin/bash",
-		"-i",
-		"install.sh"
-	],
 	"updateContentCommand": [
 		"/bin/bash",
 		"-i",
