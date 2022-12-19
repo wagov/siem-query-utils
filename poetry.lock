@@ -1937,7 +1937,7 @@ devel = ["colorama", "json-spec", "jsonschema", "pylint", "pytest", "pytest-benc
 
 [[package]]
 name = "fire"
-version = "0.4.0"
+version = "0.5.0"
 description = "A library for automatically generating command line interfaces."
 category = "main"
 optional = false
@@ -4120,7 +4120,7 @@ test = ["pytest"]
 [metadata]
 lock-version = "1.1"
 python-versions = "^3.10"
-content-hash = "0fe8bf85cadf8d6b4c151e14499493721565fd47139e9048ea001d4a5af171c7"
+content-hash = "f4415d0aec2fbda412ed09c13ce3e322b09db1ffde7058d6075051a05a596fd9"
 
 [metadata.files]
 adal = [
@@ -5036,7 +5036,7 @@ fastjsonschema = [
     {file = "fastjsonschema-2.16.2.tar.gz", hash = "sha256:01e366f25d9047816fe3d288cbfc3e10541daf0af2044763f3d0ade42476da18"},
 ]
 fire = [
-    {file = "fire-0.4.0.tar.gz", hash = "sha256:c5e2b8763699d1142393a46d0e3e790c5eb2f0706082df8f647878842c216a62"},
+    {file = "fire-0.5.0.tar.gz", hash = "sha256:a6b0d49e98c8963910021f92bba66f65ab440da2982b78eb1bbf95a0a34aacc6"},
 ]
 flatten-json = [
     {file = "flatten_json-0.1.13.tar.gz", hash = "sha256:ee352333e8293e957ccb1b4597a111fc4f6da88ab74b8cb3f8f51eed1e12f500"},
