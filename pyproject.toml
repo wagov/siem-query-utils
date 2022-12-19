@@ -35,12 +35,13 @@ python-dotenv = "^0.21.0"
 pylint = "^2.15.9"
 weasyprint = "^57.1"
 papermill = "^2.4.0"
+poetry-plugin-up = "^0.2.1"
 
 [tool.poetry.scripts]
 siem_query_utils = "siem_query_utils:cli"
 
 [tool.poetry.group.dev.dependencies]
-black = { version = "^22.10.0", allow-prereleases = true }
+black = { version = "^22.12.0", allow-prereleases = true }
 pytest = "^7.2.0"
 
 [build-system]
