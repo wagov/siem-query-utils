@@ -1,4 +1,4 @@
 #!/bin/bash
-python3 -m pip install .
+pip install -e .
 npm install
 git submodule update --init

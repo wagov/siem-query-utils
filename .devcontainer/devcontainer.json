@@ -1,19 +1,16 @@
 {
-	"name": "Python 3.10 SQU V2.0.0",
+	"name": "Jupyter Data Science Notebooks (Community)",
 	"build": {
 		"dockerfile": "../Dockerfile",
 		"cacheFrom": " ghcr.io/wagov/siem-query-utils:latest"
 	},
-	"features": {
-		"ghcr.io/devcontainers/features/github-cli": {},
-		"ghcr.io/devcontainers/features/docker-in-docker": {}
-	},
+
 	"hostRequirements": {
 		"cpus": 4
 	},
-	"containerEnv": {
-		"PATH": "${localEnv:PATH}:.venv/bin"
-	},
+	"overrideCommand": false,
+
+	// Configure tool-specific properties.
 	"customizations": {
 		"codespaces": {
 			"repositories": {
@@ -22,7 +19,14 @@
 				}
 			}
 		},
+		// Configure properties specific to VS Code.
 		"vscode": {
+			// Set *default* container specific settings.json values on container create.
+			"settings": { 
+				"python.defaultInterpreterPath": "/opt/conda/bin/python"
+			},
+			
+			// Add the IDs of extensions you want installed when the container is created.
 			"extensions": [
 				"ms-python.python",
 				"ms-toolsai.jupyter",
@@ -47,7 +51,15 @@
 			"label": "API Server"
 		},
 		"8888": {
-			"label": "Jupyter Lab"
+			"label": "Jupyter Lab",
+			"requireLocalPort": true,
+			"onAutoForward": "ignore"
 		}
+	},
+
+	// Set `remoteUser` to `root` to connect as root instead. More info: https://aka.ms/vscode-remote/containers/non-root.
+	"remoteUser": "jovyan",
+	"features": {
+		"ghcr.io/devcontainers/features/docker-in-docker:2": {}
 	}
 }

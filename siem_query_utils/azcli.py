@@ -27,6 +27,7 @@ from pathvalidate import sanitize_filepath
 from uvicorn.config import Config
 
 local_env = Path(".env")
+print(local_env)
 if local_env.exists():
     load_dotenv(dotenv_path=local_env)
 
