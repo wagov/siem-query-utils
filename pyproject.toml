@@ -33,7 +33,6 @@ esparto = "^4.2.0"
 tinycss2 = "^1.2.1"
 python-dotenv = "^0.21.0"
 pylint = "^2.15.9"
-weasyprint = "^57.1"
 papermill = "^2.4.0"
 poetry-plugin-up = "^0.2.1"
 
