@@ -3,12 +3,8 @@ line-length = 100
 skip-magic-trailing-comma = true
 preview = true
 
-[tool.pylint.format]
-max-line-length = 120
-
-[tool.pylint.logging]
-disable = ["logging-fstring-interpolation"]
-enable = ["logging-format-interpolation"]
+[tool.ruff]
+line-length = 120
 
 [tool.poetry]
 name = "siem-query-utils"
@@ -35,6 +31,9 @@ python-dotenv = "^0.21.0"
 pylint = "^2.15.9"
 papermill = "^2.4.0"
 poetry-plugin-up = "^0.2.1"
+ipykernel = "^6.19.4"
+pandas = "^1.5.2"
+azure-cli = "^2.43.0"
 
 [tool.poetry.scripts]
 siem_query_utils = "siem_query_utils:cli"

@@ -26,10 +26,13 @@ from fastapi import HTTPException
 from pathvalidate import sanitize_filepath
 from uvicorn.config import Config
 
-local_env = Path(".env")
-print(local_env)
-if local_env.exists():
-    load_dotenv(dotenv_path=local_env)
+# load env vars from .env files
+for f in Path(".env").absolute().parents:
+    dotenv = f / ".env"
+    if dotenv.exists():
+        load_dotenv(dotenv_path=dotenv)
+        print(f"Loaded environment variables from {dotenv}.")
+        break
 
 
 # Steal uvicorns logger config
@@ -159,6 +162,7 @@ def configure_loop():
     app_state["executor"] = ThreadPoolExecutor(max_workers=int(os.environ.get("MAX_THREADS", 8)))
     loop.set_default_executor(app_state["executor"])
 
+
 def submit(func, *args, **kwargs):
     """
     Submit a function to the default loop executor
@@ -175,6 +179,7 @@ def submit(func, *args, **kwargs):
         configure_loop()
     return app_state["executor"].submit(func, *args, **kwargs)
 
+
 def bootstrap(_app_state: dict):
     """
     Load app state from env vars or dotenv
@@ -186,14 +191,9 @@ def bootstrap(_app_state: dict):
         Exception: if essential env vars are not set
     """
     try:
-        prefix, subscription = (
-            os.environ["DATALAKE_BLOB_PREFIX"],
-            os.environ["DATALAKE_SUBSCRIPTION"],
-        )
+        prefix, subscription = (os.environ["DATALAKE_BLOB_PREFIX"], os.environ["DATALAKE_SUBSCRIPTION"])
     except Exception as exc:
-        raise Exception(
-            "Please set DATALAKE_BLOB_PREFIX and DATALAKE_SUBSCRIPTION env vars"
-        ) from exc
+        raise Exception("Please set DATALAKE_BLOB_PREFIX and DATALAKE_SUBSCRIPTION env vars") from exc
     account, container = prefix.split("/")[2:]
     _app_state.update(
         {
@@ -207,12 +207,8 @@ def bootstrap(_app_state: dict):
                 importlib.resources.read_text(f"{__package__}.templates", "email-template.html")
             ),
             "datalake_path": lambda: get_blob_path(prefix, subscription),
-            "email_footer": os.environ.get(
-                "FOOTER_HTML", "Set FOOTER_HTML env var to configure this..."
-            ),
-            "data_collector_connstring": os.environ.get(
-                "AZMONITOR_DATA_COLLECTOR"
-            ),  # kinda optional
+            "email_footer": os.environ.get("FOOTER_HTML", "Set FOOTER_HTML env var to configure this..."),
+            "data_collector_connstring": os.environ.get("AZMONITOR_DATA_COLLECTOR"),  # kinda optional
             "keyvault_session": lambda: load_session(boot(os.environ["KEYVAULT_SESSION_SECRET"]))
             if "KEYVAULT_SESSION_SECRET" in os.environ
             else None,
@@ -231,13 +227,10 @@ def login(refresh: bool = False):
     cli = get_default_cli()
     if os.environ.get("IDENTITY_HEADER"):
         if refresh:
-            cli.invoke(
-                ["logout", "--only-show-errors", "-o", "json"], out_file=open(os.devnull, "w")
-            )
+            cli.invoke(["logout", "--only-show-errors", "-o", "json"], out_file=open(os.devnull, "w"))
         # Use managed service identity to login
         loginstatus = cli.invoke(
-            ["login", "--identity", "--only-show-errors", "-o", "json"],
-            out_file=open(os.devnull, "w"),
+            ["login", "--identity", "--only-show-errors", "-o", "json"], out_file=open(os.devnull, "w")
         )
         if cli.result.error:
             # bail as we aren't able to login
@@ -253,8 +246,7 @@ def login(refresh: bool = False):
                 app_state["login_time"] = datetime.utcnow()
             else:
                 cli.invoke(
-                    ["login", "--tenant", os.environ["TENANT_ID"], "--use-device-code"],
-                    out_file=open(os.devnull, "w"),
+                    ["login", "--tenant", os.environ["TENANT_ID"], "--use-device-code"], out_file=open(os.devnull, "w")
                 )
     # setup all other env vars
     bootstrap(app_state)
@@ -316,11 +308,7 @@ def azcli(basecmd: list, attempt: int = 0, max_attempts: int = 5):
 
 @cache.memoize(ttl=60 * 60 * 24)  # cache sas tokens 1 day
 def generatesas(
-    account: str = None,
-    container: str = None,
-    subscription: str = None,
-    permissions="racwdlt",
-    expiry_days=3,
+    account: str = None, container: str = None, subscription: str = None, permissions="racwdlt", expiry_days=3
 ) -> str:
     """
     Generate a SAS token for a storage account
@@ -378,8 +366,6 @@ def get_blob_path(url: str, subscription: str = ""):
     else:
         sas = generatesas(account, container, subscription)
     blobclient = AzureBlobClient(
-        blob_service_client=BlobServiceClient(
-            account_url=url.replace(f"/{container}", ""), credential=sas
-        )
+        blob_service_client=BlobServiceClient(account_url=url.replace(f"/{container}", ""), credential=sas)
     )
     return blobclient.CloudPath(f"az://{container}")

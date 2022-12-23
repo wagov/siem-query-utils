@@ -1,6 +1,6 @@
 # siem-query-utils
 
-General utilities for querying SIEMs developed using [FastAPI](https://fastapi.tiangolo.com/) built ontop of [python:3.10](https://github.com/docker-library/python/blob/master/3.10/bullseye/Dockerfile). This container supports direct execution using [python-fire](https://github.com/google/python-fire) and a local webserver run on [uvicorn](https://www.uvicorn.org/#uvicornrun) using `siem_query_utils serve`.
+General utilities for querying SIEMs developed using [FastAPI](https://fastapi.tiangolo.com/) built ontop of [jupyter-datascience:python-3.10](https://jupyter-docker-stacks.readthedocs.io/en/latest/using/selecting.html#jupyter-datascience-notebook). This container supports direct execution using [python-fire](https://github.com/google/python-fire) and a local webserver run on [uvicorn](https://www.uvicorn.org/#uvicornrun) using `siem_query_utils serve`.
 
 High cost functions are cached using [cacheout](https://github.com/dgilland/cacheout) which significantly improves performance by defaulting to caching all [azure cli](https://pypi.org/project/azure-cli/) calls in memory for 5 minutes.
 
@@ -16,14 +16,21 @@ az webapp create --name <APP_NAME> --resource-group myRG --plan myPremiumPlan --
 
 ## Development
 
-For local development and interactive debugging run as follows (requires python 3.10 and [poetry](https://python-poetry.org/docs/#installing-with-the-official-installer)):
+For local development under macOS and interactive debugging run as follows (requires python 3.10):
 
 ```bash
-curl -sSL https://install.python-poetry.org | python3 -
+# macOS prerequisites
+brew install quarto weasyprint wkhtmltopdf jupyterlab
+# Install python dependencies
+pip3 install .
+# Install using poetry so project is editable
 poetry install
+# Login to azure cli (tenant is optional, but useful if e.g. one tenant has specific auth constraints).
 az login --tenant $TENANT_ID
-# follow auth prompts
-poetry run siem_query_utils serve
+# Run the basic service api
+siem_query_utils serve
+# Run a jupyter lab instance in the project directory
+jupyter lab
 ```
 
 If you are using github codespaces, quickstart below:

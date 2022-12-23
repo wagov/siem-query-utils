@@ -57,7 +57,7 @@ def atlaskit(execute=True):
     launch node helper on port 3000 (handle running in a non interactive session for nvm/node access).
     """
     node_module = importlib.resources.path(f"{__package__}.js", "atlaskit-transformer.mjs")
-    cmd = [node_module.resolve()]  # pylint: disable=no-member
+    cmd = ["bash", "-i", "-c", node_module.resolve()]  # pylint: disable=no-member
     if execute:
         run(cmd, check=False)
     return cmd
