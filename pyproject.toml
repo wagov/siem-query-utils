@@ -41,6 +41,7 @@ starlette = "^0.22.0"
 uvicorn = "^0.20.0"
 fastapi = "^0.88.0"
 itsdangerous = "^2.1.2"
+weasyprint = "^57.2"
 
 [tool.poetry.scripts]
 siem_query_utils = "siem_query_utils:cli"
