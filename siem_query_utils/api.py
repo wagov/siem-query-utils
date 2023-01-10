@@ -13,23 +13,26 @@ import shlex
 import tempfile
 import time
 import zipfile
+from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import datetime
 from enum import Enum
 from mimetypes import guess_type
 from pathlib import Path
+from string import Template
 from typing import Optional
 
 import httpx_cache
 import pandas
 import papermill
 import requests
+from azure.kusto.data.helpers import dataframe_from_result_table
 from cloudpathlib import AnyPath
 from dateutil.parser import isoparse
 from fastapi import APIRouter, Body, HTTPException, Request, Response
 from fastapi.responses import PlainTextResponse, StreamingResponse
 from requests.exceptions import ReadTimeout
 
-from .azcli import azcli, cache, clean_path, logger, settings, submit
+from .azcli import adx_query, azcli, cache, clean_path, logger, settings, submit
 from .proxy import httpx_client
 
 router = APIRouter()
@@ -111,7 +114,9 @@ def load_kql(query: str) -> str:
     return query
 
 
-def analytics_query(workspaces: list[str], query: str, timespan: str = "P7D", group_queries=True, dry_run=False):
+def analytics_query(
+    workspaces: list[str], query: str, timespan: str = "P7D", group_queries=True, dry_run=False
+):
     "Queries a list of workspaces using kusto"
     query = load_kql(query)
     cmd_base = [
@@ -179,6 +184,31 @@ def list_workspaces(fmt: OutputFormat = OutputFormat.LIST, agency="ALL"):
         return dataframe.to_csv()
     elif fmt == OutputFormat.DF:
         return dataframe
+
+
+@cache.memoize(ttl=60 * 60 * 3)  # 3 hr cache
+def workspace_details():
+    wsdetail = []
+    for wsdata in list_workspaces("json"):
+        customerId = wsdata["customerId"]
+        sub = wsdata["subscription"]
+        ws = azcli(
+            [
+                "monitor",
+                "log-analytics",
+                "workspace",
+                "list",
+                "--subscription",
+                sub,
+                "--query",
+                f"[?customerId == '{customerId}']",
+            ]
+        )[0]
+        ws["id"] = ws["id"].lower()
+        ws["name"] = ws["name"].lower()
+        ws["ingest_function"] = f"{ws['customerId'].replace('-', '_')}_incoming"
+        wsdetail.append(ws)
+    return wsdetail
 
 
 @router.get("/listDomains", response_class=PlainTextResponse)
@@ -340,7 +370,9 @@ def query_all(
     Query all workspaces from `/listWorkspaces` using kusto.
     """
     if fmt == OutputFormat.CMD:
-        cmd = analytics_query(list_workspaces(), query, timespan, group_queries=group_queries, dry_run=True)
+        cmd = analytics_query(
+            list_workspaces(), query, timespan, group_queries=group_queries, dry_run=True
+        )
         return PlainTextResponse(content=cmd)
     results = analytics_query(list_workspaces(), query, timespan, group_queries=group_queries)
     if fmt == OutputFormat.JSON:
@@ -796,3 +828,46 @@ def upload_loganalytics(rows: list[dict], log_type: str, target_workspace: str =
         futures.append(submit(upload_loganalytics_raw, rows, customer_id, shared_key, log_type))
     # wait(futures)
     logger.info(f"Uploaded {len(allrows)} records to {log_type}_CL.")
+
+
+def configure_datalake_hot():
+    ingestfunc = Template(
+        """
+        .create-or-alter function with (folder = "ingestion") $ingest_function(tbl: string, rows: int=20000) {
+            let source = cluster('https://ade.loganalytics.io$id').database('$name').table(tbl);
+            let temp_dest = datatable (source_ingestion_time: datetime, TenantId: string)[];
+            let after = toscalar(union isfuzzy=true table(tbl), temp_dest
+                | where TenantId == '$customerId'
+                | summarize max(source_ingestion_time));
+            table(tbl)
+            | take 0
+            | union isfuzzy=True source
+            | extend source_ingestion_time = ingestion_time()
+            | where source_ingestion_time >= iif(isempty(after), ago(45d), after)
+            | order by source_ingestion_time asc
+            | take rows
+        }
+    """
+    )
+    queries = []
+    for ws in workspace_details():
+        queries.append(ingestfunc.substitute(**ws))
+    return dataframe_from_result_table(adx_query(queries))
+
+
+def ingest_datalake_hot():
+    ingestion = Template(
+        """
+        .set-or-append SigninLogs with (extend_schema = true) <| $ingest_function('SigninLogs') | project-away ConditionalAccessPolicies
+        .set-or-append DeviceProcessEvents with (extend_schema = true) <| $ingest_function('DeviceProcessEvents') | project-away AdditionalFields
+        .set-or-append SecurityEvent with (extend_schema = true) <| $ingest_function('SecurityEvent') | project-away EventData
+    """
+    )
+
+    futures = []
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        for ws in workspace_details():
+            logger.debug(f"ingesting {ws['name']}")
+            query = ingestion.substitute(**ws).strip().split("\n")
+            futures.append(executor.submit(adx_query, query))
+        wait(futures)

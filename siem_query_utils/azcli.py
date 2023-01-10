@@ -25,6 +25,8 @@ from dotenv import load_dotenv
 from fastapi import HTTPException
 from pathvalidate import sanitize_filepath
 from uvicorn.config import Config
+from azure.kusto.data import KustoClient, KustoConnectionStringBuilder
+
 
 # load env vars from .env files
 for f in Path(".env").absolute().parents:
@@ -191,10 +193,16 @@ def bootstrap(_app_state: dict):
         Exception: if essential env vars are not set
     """
     try:
-        prefix, subscription = (os.environ["DATALAKE_BLOB_PREFIX"], os.environ["DATALAKE_SUBSCRIPTION"])
+        prefix, subscription = (
+            os.environ["DATALAKE_BLOB_PREFIX"],
+            os.environ["DATALAKE_SUBSCRIPTION"],
+        )
     except Exception as exc:
-        raise Exception("Please set DATALAKE_BLOB_PREFIX and DATALAKE_SUBSCRIPTION env vars") from exc
+        raise Exception(
+            "Please set DATALAKE_BLOB_PREFIX and DATALAKE_SUBSCRIPTION env vars"
+        ) from exc
     account, container = prefix.split("/")[2:]
+    cluster, default_dx_db = os.environ.get("AZURE_DATAEXPLORER", "-/-").rsplit("/", 1)
     _app_state.update(
         {
             # datalake_blob_prefix example: "https://{datalake_account}.blob.core.windows.net/{datalake_container}"
@@ -207,8 +215,16 @@ def bootstrap(_app_state: dict):
                 importlib.resources.read_text(f"{__package__}.templates", "email-template.html")
             ),
             "datalake_path": lambda: get_blob_path(prefix, subscription),
-            "email_footer": os.environ.get("FOOTER_HTML", "Set FOOTER_HTML env var to configure this..."),
-            "data_collector_connstring": os.environ.get("AZMONITOR_DATA_COLLECTOR"),  # kinda optional
+            "email_footer": os.environ.get(
+                "FOOTER_HTML", "Set FOOTER_HTML env var to configure this..."
+            ),
+            "data_collector_connstring": os.environ.get(
+                "AZMONITOR_DATA_COLLECTOR"
+            ),  # kinda optional
+            "dx_client": lambda: KustoClient(
+                KustoConnectionStringBuilder.with_az_cli_authentication(cluster)
+            ),
+            "dx_db": default_dx_db,
             "keyvault_session": lambda: load_session(boot(os.environ["KEYVAULT_SESSION_SECRET"]))
             if "KEYVAULT_SESSION_SECRET" in os.environ
             else None,
@@ -227,10 +243,13 @@ def login(refresh: bool = False):
     cli = get_default_cli()
     if os.environ.get("IDENTITY_HEADER"):
         if refresh:
-            cli.invoke(["logout", "--only-show-errors", "-o", "json"], out_file=open(os.devnull, "w"))
+            cli.invoke(
+                ["logout", "--only-show-errors", "-o", "json"], out_file=open(os.devnull, "w")
+            )
         # Use managed service identity to login
         loginstatus = cli.invoke(
-            ["login", "--identity", "--only-show-errors", "-o", "json"], out_file=open(os.devnull, "w")
+            ["login", "--identity", "--only-show-errors", "-o", "json"],
+            out_file=open(os.devnull, "w"),
         )
         if cli.result.error:
             # bail as we aren't able to login
@@ -246,7 +265,8 @@ def login(refresh: bool = False):
                 app_state["login_time"] = datetime.utcnow()
             else:
                 cli.invoke(
-                    ["login", "--tenant", os.environ["TENANT_ID"], "--use-device-code"], out_file=open(os.devnull, "w")
+                    ["login", "--tenant", os.environ["TENANT_ID"], "--use-device-code"],
+                    out_file=open(os.devnull, "w"),
                 )
     # setup all other env vars
     bootstrap(app_state)
@@ -308,7 +328,11 @@ def azcli(basecmd: list, attempt: int = 0, max_attempts: int = 5):
 
 @cache.memoize(ttl=60 * 60 * 24)  # cache sas tokens 1 day
 def generatesas(
-    account: str = None, container: str = None, subscription: str = None, permissions="racwdlt", expiry_days=3
+    account: str = None,
+    container: str = None,
+    subscription: str = None,
+    permissions="racwdlt",
+    expiry_days=3,
 ) -> str:
     """
     Generate a SAS token for a storage account
@@ -366,6 +390,27 @@ def get_blob_path(url: str, subscription: str = ""):
     else:
         sas = generatesas(account, container, subscription)
     blobclient = AzureBlobClient(
-        blob_service_client=BlobServiceClient(account_url=url.replace(f"/{container}", ""), credential=sas)
+        blob_service_client=BlobServiceClient(
+            account_url=url.replace(f"/{container}", ""), credential=sas
+        )
     )
     return blobclient.CloudPath(f"az://{container}")
+
+
+def adx_query(kql):
+    """
+    Run a kusto query
+
+    Args:
+        kql (str or list): kusto query or list of queries
+
+    Returns:
+        json: query results
+    """
+    if isinstance(kql, list):
+        kql = [".execute script <|"] + kql
+        kql = "\n".join(kql)
+    try:
+        return settings("dx_client").execute(settings("dx_db"), kql).primary_results[0]
+    except Exception as exc:
+        logger.warning(exc)

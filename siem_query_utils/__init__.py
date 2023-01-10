@@ -7,6 +7,7 @@ from inspect import cleandoc
 from secrets import token_urlsafe
 from subprocess import Popen, run
 
+import schedule
 import uvicorn
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
@@ -44,12 +45,28 @@ app.add_middleware(
 # Configures default executor including number of threads when running uvicorn
 app.on_event("startup")(configure_loop)
 
+# register regular background tasks
+schedule.every(1).hours.do(api.list_workspaces)
+schedule.every(1).days.do(api.configure_datalake_hot)
+
+
 @app.get("/")
 def index():
     """
     Redirect to /docs
     """
     return RedirectResponse("/docs")
+
+
+@app.get("/run_pending")
+def run_pending():
+    schedule.run_pending()
+    return {"jobs": [str(job) for job in schedule.get_jobs()]}
+
+
+@app.get("/jobs")
+def jobs():
+    return {"jobs": [str(job) for job in schedule.get_jobs()]}
 
 
 def atlaskit(execute=True):
@@ -69,10 +86,19 @@ def serve():
     assumes you have already run `az login` and `az account set` to set the correct subscription.
     its recommended to run this behind a reverse proxy like nginx or traefik.
     """
-    background_atlaskit = Popen(atlaskit(execute=False), close_fds=True)
+    # background_atlaskit = Popen(atlaskit(execute=False), close_fds=True)
+    background_jobs = Popen(
+        [
+            "bash",
+            "-c",
+            "while true; do curl -s -o /dev/null http://localhost:8000/run_pending; sleep 15; done",
+        ],
+        close_fds=True,
+    )
     host, port, log_level = "0.0.0.0", 8000, os.environ.get("LOG_LEVEL", "WARNING").lower()
     uvicorn.run(f"{__package__}:app", port=port, host=host, log_level=log_level, proxy_headers=True)
-    background_atlaskit.kill()
+    # background_atlaskit.kill()
+    background_jobs.kill()
 
 
 def jupyterlab(path: str = "."):
