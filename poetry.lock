@@ -4448,6 +4448,24 @@ redis = ["redis"]
 tests = ["pytest (>=5.4.1)", "pytest-cov (>=2.8.1)", "pytest-mypy (>=0.8.0)", "pytest-timeout (>=2.1.0)", "redis", "sphinx (>=3.0.3)"]
 
 [[package]]
+name = "prettytable"
+version = "3.6.0"
+description = "A simple Python library for easily displaying tabular data in a visually appealing ASCII table format"
+category = "main"
+optional = false
+python-versions = ">=3.7"
+files = [
+    {file = "prettytable-3.6.0-py3-none-any.whl", hash = "sha256:3b767129491767a3a5108e6f305cbaa650f8020a7db5dfe994a2df7ef7bad0fe"},
+    {file = "prettytable-3.6.0.tar.gz", hash = "sha256:2e0026af955b4ea67b22122f310b90eae890738c08cb0458693a49b6221530ac"},
+]
+
+[package.dependencies]
+wcwidth = "*"
+
+[package.extras]
+tests = ["pytest", "pytest-cov", "pytest-lazy-fixture"]
+
+[[package]]
 name = "prompt-toolkit"
 version = "3.0.36"
 description = "Library for building powerful interactive command lines in Python"
@@ -4830,6 +4848,144 @@ files = [
     {file = "pyrsistent-0.19.3-py3-none-any.whl", hash = "sha256:ccf0d6bd208f8111179f0c26fdf84ed7c3891982f2edaeae7422575f47e66b64"},
     {file = "pyrsistent-0.19.3.tar.gz", hash = "sha256:1a2994773706bbb4995c31a97bc94f1418314923bd1048c6d964837040376440"},
 ]
+
+[[package]]
+name = "pysigma"
+version = "0.8.12"
+description = "Sigma rule processing and conversion tools"
+category = "main"
+optional = false
+python-versions = ">=3.8,<4.0"
+files = [
+    {file = "pysigma-0.8.12-py3-none-any.whl", hash = "sha256:d1067fb02e5b0267b21799ccb4b0ea934fa3809b1bfc3ae281c55efa160d61ab"},
+    {file = "pysigma-0.8.12.tar.gz", hash = "sha256:100271f830e45989fc411d5c9bf877bbb10060bb60e2127830f6f30282f89629"},
+]
+
+[package.dependencies]
+pyparsing = ">=3.0.7,<4.0.0"
+pyyaml = ">=6.0,<7.0"
+
+[[package]]
+name = "pysigma-backend-elasticsearch"
+version = "0.1.2"
+description = "pySigma Elasticsearch backend"
+category = "main"
+optional = false
+python-versions = ">=3.8,<4.0"
+files = [
+    {file = "pySigma-backend-elasticsearch-0.1.2.tar.gz", hash = "sha256:595a126691038b3f92d210d0d61c2d43486118993875aec9d6df25491dfc01e2"},
+    {file = "pysigma_backend_elasticsearch-0.1.2-py3-none-any.whl", hash = "sha256:0b5663418d8ab71f8794192ab65df306b4f42c383d6d7926e88f80657e338ba7"},
+]
+
+[package.dependencies]
+pysigma = ">=0.8.12,<0.9.0"
+
+[[package]]
+name = "pysigma-backend-insightidr"
+version = "0.1.8"
+description = "pySigma Rapid7 InsightIDR backend"
+category = "main"
+optional = false
+python-versions = ">=3.8,<4.0"
+files = [
+    {file = "pysigma-backend-insightidr-0.1.8.tar.gz", hash = "sha256:ce97f8fd4d3a4e3d604780b4a5c19f2c9c09d0b188728d7e66fb99f24df089ef"},
+    {file = "pysigma_backend_insightidr-0.1.8-py3-none-any.whl", hash = "sha256:a316cf4579db1736a5cebaea8d4405f7be721d5e03439ad4755cbf4786e1d794"},
+]
+
+[package.dependencies]
+pysigma = ">=0.8.1,<0.9.0"
+
+[[package]]
+name = "pysigma-backend-opensearch"
+version = "0.1.4"
+description = "pySigma OpenSearch backend"
+category = "main"
+optional = false
+python-versions = ">=3.8,<4.0"
+files = [
+    {file = "pySigma-backend-opensearch-0.1.4.tar.gz", hash = "sha256:877e4e327a5b9f38556360e41696709c3886c5acc2275a33b4e6dc7503b2edca"},
+    {file = "pysigma_backend_opensearch-0.1.4-py3-none-any.whl", hash = "sha256:6e93c881b6e47769374af0b9bb622b2d19276ca029cf827bc5eaa46aef408b6b"},
+]
+
+[package.dependencies]
+pysigma = ">=0.8.12,<0.9.0"
+pysigma-backend-elasticsearch = ">=0.1.2,<0.2.0"
+
+[[package]]
+name = "pysigma-backend-qradar"
+version = "0.2.1"
+description = "pySigma Qradar backend"
+category = "main"
+optional = false
+python-versions = ">=3.8,<4.0"
+files = [
+    {file = "pysigma-backend-qradar-0.2.1.tar.gz", hash = "sha256:6417892fa5829f389595517a16613d07e222c5373b50a106d7a3de79affbe938"},
+    {file = "pysigma_backend_qradar-0.2.1-py3-none-any.whl", hash = "sha256:983a5dcb99cf7d38e3e40e236ce0f319af576c88825cbaa7f61155f64f80f924"},
+]
+
+[package.dependencies]
+pysigma = ">=0.8.1,<0.9.0"
+
+[[package]]
+name = "pysigma-backend-splunk"
+version = "0.3.7"
+description = "pySigma Splunk backend"
+category = "main"
+optional = false
+python-versions = ">=3.8,<4.0"
+files = [
+    {file = "pysigma-backend-splunk-0.3.7.tar.gz", hash = "sha256:850f499b2ff587ef81b33446de3841672078b0bae8f3fd8b805efe119cce912c"},
+    {file = "pysigma_backend_splunk-0.3.7-py3-none-any.whl", hash = "sha256:152a0520111212644e33584b7b57f2e328500bab8f1afdef5da2bf54c4a276a3"},
+]
+
+[package.dependencies]
+pysigma = ">=0.8.1,<0.9.0"
+pysigma-pipeline-sysmon = ">=1.0.0,<2.0.0"
+
+[[package]]
+name = "pysigma-pipeline-crowdstrike"
+version = "0.1.8"
+description = "pySigma CrowdStrike processing pipelines"
+category = "main"
+optional = false
+python-versions = ">=3.8,<4.0"
+files = [
+    {file = "pysigma-pipeline-crowdstrike-0.1.8.tar.gz", hash = "sha256:d63f429e85774edd14bcab1e8af7d6856ef77094dc5e3b8d860a2c4d42662609"},
+    {file = "pysigma_pipeline_crowdstrike-0.1.8-py3-none-any.whl", hash = "sha256:8a98e7a4321e3f179ce30d4d7d6d4bcb7a464dbf6887d679aea72b6eb0b70761"},
+]
+
+[package.dependencies]
+pysigma = ">=0.8.1,<0.9.0"
+
+[[package]]
+name = "pysigma-pipeline-sysmon"
+version = "1.0.1"
+description = "pySigma Sysmon processing pipelines"
+category = "main"
+optional = false
+python-versions = ">=3.8,<4.0"
+files = [
+    {file = "pysigma-pipeline-sysmon-1.0.1.tar.gz", hash = "sha256:843f7b34b3a61005007720a9896fcec346b8a2d0587ceb1bb3d288757fe3496a"},
+    {file = "pysigma_pipeline_sysmon-1.0.1-py3-none-any.whl", hash = "sha256:d9070fb35aeff85e19d258327ca8fb7c6c9f577f07288e54b6705fad346bf2c9"},
+]
+
+[package.dependencies]
+pysigma = ">=0.8.1,<0.9.0"
+
+[[package]]
+name = "pysigma-pipeline-windows"
+version = "1.0.1"
+description = "pySigma Windows processing pipelines"
+category = "main"
+optional = false
+python-versions = ">=3.8,<4.0"
+files = [
+    {file = "pysigma-pipeline-windows-1.0.1.tar.gz", hash = "sha256:ba6aa3f1a2c301aeea3c9f4c086da0b7b80bbf5ffc9cfc4e9e3de82aae4d3016"},
+    {file = "pysigma_pipeline_windows-1.0.1-py3-none-any.whl", hash = "sha256:9d3f1bb03fb3d98ba8736f5c27d21fbe9f3f9fac54e7af787307691dcfd2941f"},
+]
+
+[package.dependencies]
+pysigma = ">=0.8.1,<0.9.0"
 
 [[package]]
 name = "pysocks"
@@ -5337,6 +5493,31 @@ files = [
     {file = "shellingham-1.5.0.post1-py2.py3-none-any.whl", hash = "sha256:368bf8c00754fd4f55afb7bbb86e272df77e4dc76ac29dbcbb81a59e9fc15744"},
     {file = "shellingham-1.5.0.post1.tar.gz", hash = "sha256:823bc5fb5c34d60f285b624e7264f4dda254bc803a3774a147bf99c0e3004a28"},
 ]
+
+[[package]]
+name = "sigma-cli"
+version = "0.5.3"
+description = "Sigma Command Line Interface (conversion, check etc.) based on pySigma"
+category = "main"
+optional = false
+python-versions = ">=3.8,<4.0"
+files = [
+    {file = "sigma-cli-0.5.3.tar.gz", hash = "sha256:b707c0b33c9a73b8c8258ed21c0cc5788a82be8f14067f0b570a047f3c728f90"},
+    {file = "sigma_cli-0.5.3-py3-none-any.whl", hash = "sha256:d8c51ae93b5f6f96a29a16129c6245b9e2078e42f71eb06a4bf7f35f9da49b47"},
+]
+
+[package.dependencies]
+click = ">=8.0.3,<9.0.0"
+prettytable = ">=3.1.1,<4.0.0"
+pysigma = ">=0.8.4,<0.9.0"
+pysigma-backend-elasticsearch = ">=0.1.0,<0.2.0"
+pysigma-backend-insightidr = ">=0.1.8,<0.2.0"
+pysigma-backend-opensearch = ">=0.1.0,<0.2.0"
+pysigma-backend-qradar = ">=0.2.1,<0.3.0"
+pysigma-backend-splunk = ">=0.3.7,<0.4.0"
+pysigma-pipeline-crowdstrike = ">=0.1.8,<0.2.0"
+pysigma-pipeline-sysmon = ">=1.0.1,<2.0.0"
+pysigma-pipeline-windows = ">=1.0.1,<2.0.0"
 
 [[package]]
 name = "six"

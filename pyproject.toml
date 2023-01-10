@@ -42,6 +42,7 @@ uvicorn = "^0.20.0"
 fastapi = "^0.89.0"
 itsdangerous = "^2.1.2"
 weasyprint = "^57.2"
+sigma-cli = "^0.5.3"
 
 [tool.poetry.scripts]
 siem_query_utils = "siem_query_utils:cli"
