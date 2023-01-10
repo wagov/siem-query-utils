@@ -8,7 +8,7 @@
   "author": "",
   "dependencies": {
     "@atlaskit/editor-json-transformer": "^8.8.3",
-    "@atlaskit/editor-markdown-transformer": "^4.2.17",
+    "@atlaskit/editor-markdown-transformer": "^5.0.0",
     "@atlaskit/editor-wikimarkup-transformer": "^11.1.12",
     "fastify": "^4.10.2"
   }
