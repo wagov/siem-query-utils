@@ -28,8 +28,8 @@ def _session(request: Request, key="session") -> dict:
     return sessions[request.session["key"]][key]
 
 
-@router.get("/main_path")
-def main_path(request: Request) -> RedirectResponse:
+@router.get("/main_path", response_class=RedirectResponse)
+def main_path(request: Request):
     """
     Redirect to the main path for this session
 
@@ -95,7 +95,7 @@ def filter_headers(  # pylint: disable=dangerous-default-value
 
     Args:
         headers (dict): headers to filter
-        filtered_prefixes (list, optional): prefixes to filter. 
+        filtered_prefixes (list, optional): prefixes to filter.
             Defaults to ["host", "cookie", "x-ms-", "x-arr-", "disguised-host", "referer"].
 
     Returns:
