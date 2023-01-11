@@ -77,7 +77,7 @@ def serve():
     assumes you have already run `az login` and `az account set` to set the correct subscription.
     its recommended to run this behind a reverse proxy like nginx or traefik.
     """
-    background_atlaskit = Popen(["bash", "-i", "-c", "node ."], close_fds=True)
+    background_atlaskit = Popen(["bash", "-l", "-c", "node ."], close_fds=True)
     background_jobs = Popen(
         [
             "bash",
