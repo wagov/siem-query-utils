@@ -1,6 +1,6 @@
 DATALAKE_SUBSCRIPTION={subscriptionid}
 DATALAKE_BLOB_PREFIX=https://{account}.blob.core.windows.net/{container}
-DATALAKE_SAS={sastoken}
+SCHEDULE_JOBS=False
 AZMONITOR_DATA_COLLECTOR={subscription}/{resourcegroup}/{name}
 KQL_BASEURL={https_kql_repository}
 TENANT_ID={tenantid}

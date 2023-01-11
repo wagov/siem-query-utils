@@ -4,12 +4,12 @@ LABEL org.opencontainers.image.source="https://github.com/wagov/siem-query-utils
 
 # See here for image contents: https://hub.docker.com/r/jupyter/datascience-notebook/
 
-# User setup
+# User setup and group fix
 USER root
-RUN groupadd jovyan && usermod -g jovyan -a -G users jovyan
+RUN groupmod -n jovyan users
 # Debian pkgs setup
 RUN curl -sL https://quarto.org/download/latest/quarto-linux-amd64.deb -o /tmp/quarto.deb \
- && apt-get -y update && apt-get -y --no-install-recommends install weasyprint wkhtmltopdf /tmp/quarto.deb \
+ && apt-get -y update && apt-get -y --no-install-recommends install weasyprint wkhtmltopdf byobu /tmp/quarto.deb \
  && apt-get clean -y && rm -rf /var/lib/apt/lists/* /tmp/quarto.deb
 
 # Copy over python project
