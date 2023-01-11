@@ -858,7 +858,9 @@ def ingest_datalake_hot():
     ingest_tables = Template(
         (settings("datalake_path") / dx_tmpl / "ingest_tables.kql").read_text()
     )
-    with ThreadPoolExecutor(max_workers=6) as executor:
+    with ThreadPoolExecutor(max_workers=12) as executor:
+        # 6 workers optimal for a Standard_L8as_v3 instance
+        # 12 workers optimal for a Standard_L16as_v3 instance
         ingest_queries = []
         for ws in workspace_details():
             ingest_queries += ingest_tables.substitute(**ws).strip().split("\n\n")

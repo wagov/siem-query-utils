@@ -415,7 +415,10 @@ def adx_query(kql, attempt=0):
         return settings("dx_client").execute(settings("dx_db"), kql).primary_results[0]
     except KustoServiceError as error:
         logger.debug(f"Kusto Service Error: {error}")
-        raise
+        if attempt >= 5:
+            raise
+        time.sleep(1 + attempt * 2)  # exponential backoff
+        return adx_query(kql, attempt + 1)
     except KustoThrottlingError as error:
         logger.debug(f"Kusto Throttling Error: {error}")
         if attempt >= 5:
