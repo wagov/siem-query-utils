@@ -408,7 +408,7 @@ def adx_query(kql):
         json: query results
     """
     if isinstance(kql, list):
-        kql = [".execute script <|"] + kql
+        kql = [".execute script with (ContinueOnErrors=true) <|"] + kql
         kql = "\n".join(kql)
     try:
         return settings("dx_client").execute(settings("dx_db"), kql).primary_results[0]

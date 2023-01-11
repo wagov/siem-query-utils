@@ -830,44 +830,32 @@ def upload_loganalytics(rows: list[dict], log_type: str, target_workspace: str =
     logger.info(f"Uploaded {len(allrows)} records to {log_type}_CL.")
 
 
+# Path relative to datalake_path (see azcli.py)
+dx_tmpl = "notebooks/wasoc-notebook/kql/dataexplorer"
+
+
 def configure_datalake_hot():
-    ingestfunc = Template(
-        """
-        .create-or-alter function with (folder = "ingestion") $ingest_function(tbl: string, rows: int=20000) {
-            let source = cluster('https://ade.loganalytics.io$id').database('$name').table(tbl);
-            let temp_dest = datatable (source_ingestion_time: datetime, TenantId: string)[];
-            let after = toscalar(union isfuzzy=true table(tbl), temp_dest
-                | where TenantId == '$customerId'
-                | summarize max(source_ingestion_time));
-            table(tbl)
-            | take 0
-            | union isfuzzy=True source
-            | extend source_ingestion_time = ingestion_time()
-            | where source_ingestion_time >= iif(isempty(after), ago(45d), after)
-            | order by source_ingestion_time asc
-            | take rows
-        }
     """
+    Configures the hot data lake for ingestion. Should be scheduled to run once per day.
+    """
+    ingest_func = Template((settings("datalake_path") / dx_tmpl / "ingest_func.kql").read_text())
+    return dataframe_from_result_table(
+        adx_query([ingest_func.substitute(**ws) for ws in workspace_details()])
     )
-    queries = []
-    for ws in workspace_details():
-        queries.append(ingestfunc.substitute(**ws))
-    return dataframe_from_result_table(adx_query(queries))
 
 
 def ingest_datalake_hot():
-    ingestion = Template(
-        """
-        .set-or-append SigninLogs with (extend_schema = true) <| $ingest_function('SigninLogs') | project-away ConditionalAccessPolicies
-        .set-or-append DeviceProcessEvents with (extend_schema = true) <| $ingest_function('DeviceProcessEvents') | project-away AdditionalFields
-        .set-or-append SecurityEvent with (extend_schema = true) <| $ingest_function('SecurityEvent') | project-away EventData
     """
+    Ingests the hot data lake into the data lake. Should be scheduled to run every 10 seconds.
+    """
+    ingest_tables = Template(
+        (settings("datalake_path") / dx_tmpl / "ingest_tables.kql").read_text()
     )
-
-    futures = []
+    logger.debug(f"ingesting {len(workspace_details())} workspaces")
     with ThreadPoolExecutor(max_workers=4) as executor:
         for ws in workspace_details():
-            logger.debug(f"ingesting {ws['name']}")
-            query = ingestion.substitute(**ws).strip().split("\n")
-            futures.append(executor.submit(adx_query, query))
-        wait(futures)
+            query = ingest_tables.substitute(**ws).strip().split("\n")
+            executor.submit(adx_query, query)
+
+    ingest_stats = (settings("datalake_path") / dx_tmpl / "ingest_stats.kql").read_text()
+    logger.debug(dataframe_from_result_table(adx_query(ingest_stats)))

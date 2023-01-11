@@ -46,8 +46,9 @@ app.add_middleware(
 app.on_event("startup")(configure_loop)
 
 # register regular background tasks
-schedule.every(1).hours.do(api.list_workspaces)
 schedule.every(1).days.do(api.configure_datalake_hot)
+schedule.every(1).hours.do(api.list_workspaces)
+schedule.every(10).seconds.do(api.ingest_datalake_hot)
 
 
 @app.get("/")
