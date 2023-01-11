@@ -26,6 +26,7 @@ from fastapi import HTTPException
 from pathvalidate import sanitize_filepath
 from uvicorn.config import Config
 from azure.kusto.data import KustoClient, KustoConnectionStringBuilder
+from azure.kusto.data.exceptions import KustoServiceError, KustoThrottlingError
 
 
 # load env vars from .env files
@@ -397,7 +398,7 @@ def get_blob_path(url: str, subscription: str = ""):
     return blobclient.CloudPath(f"az://{container}")
 
 
-def adx_query(kql):
+def adx_query(kql, attempt=0):
     """
     Run a kusto query
 
@@ -412,5 +413,12 @@ def adx_query(kql):
         kql = "\n".join(kql)
     try:
         return settings("dx_client").execute(settings("dx_db"), kql).primary_results[0]
-    except Exception as exc:
-        logger.warning(exc)
+    except KustoServiceError as error:
+        logger.debug(f"Kusto Service Error: {error}")
+        raise
+    except KustoThrottlingError as error:
+        logger.debug(f"Kusto Throttling Error: {error}")
+        if attempt >= 5:
+            raise
+        time.sleep(1 + attempt * 2)  # exponential backoff
+        return adx_query(kql, attempt + 1)

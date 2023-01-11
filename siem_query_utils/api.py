@@ -18,6 +18,7 @@ from datetime import datetime
 from enum import Enum
 from mimetypes import guess_type
 from pathlib import Path
+from random import shuffle
 from string import Template
 from typing import Optional
 
@@ -186,8 +187,13 @@ def list_workspaces(fmt: OutputFormat = OutputFormat.LIST, agency="ALL"):
         return dataframe
 
 
-@cache.memoize(ttl=60 * 60 * 3)  # 3 hr cache
 def workspace_details():
+    details_file = settings("datalake_path") / "notebooks/lists/workspace_details.json"
+    if (
+        details_file.exists()
+        and datetime.utcnow().timestamp() - details_file.stat().st_mtime < 60 * 60 * 3
+    ):
+        return json.loads(details_file.read_text())
     wsdetail = []
     for wsdata in list_workspaces("json"):
         customerId = wsdata["customerId"]
@@ -208,6 +214,7 @@ def workspace_details():
         ws["name"] = ws["name"].lower()
         ws["ingest_function"] = f"{ws['customerId'].replace('-', '_')}_incoming"
         wsdetail.append(ws)
+    details_file.write_text(json.dumps(wsdetail))
     return wsdetail
 
 
@@ -851,11 +858,24 @@ def ingest_datalake_hot():
     ingest_tables = Template(
         (settings("datalake_path") / dx_tmpl / "ingest_tables.kql").read_text()
     )
-    logger.debug(f"ingesting {len(workspace_details())} workspaces")
-    with ThreadPoolExecutor(max_workers=4) as executor:
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        ingest_queries = []
         for ws in workspace_details():
-            query = ingest_tables.substitute(**ws).strip().split("\n")
-            executor.submit(adx_query, query)
+            ingest_queries += ingest_tables.substitute(**ws).strip().split("\n\n")
+        shuffle(ingest_queries)
+        logger.debug(
+            f"ingesting {len(workspace_details())} workspaces using {len(ingest_queries)} queries"
+        )
+        futures = []
+        for query in ingest_queries:
+            futures.append(executor.submit(adx_query, query))
+        while True:
+            running = [f.running() for f in futures].count(True)
+            done = [f.done() for f in futures].count(True)
+            logger.debug(f"{running} running, {done} done, {len(futures)} total")
+            if running == 0:
+                break
+            time.sleep(30)
 
     ingest_stats = (settings("datalake_path") / dx_tmpl / "ingest_stats.kql").read_text()
     logger.debug(dataframe_from_result_table(adx_query(ingest_stats)))
