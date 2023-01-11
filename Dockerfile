@@ -19,4 +19,4 @@ WORKDIR /app
 SHELL ["/bin/bash", "-l", "-c"]
 # Install python project, azure cli extensions and npm subproject
 RUN pip install poetry && poetry install && az extension add -n log-analytics -y
-RUN npm install -g
+RUN npm install

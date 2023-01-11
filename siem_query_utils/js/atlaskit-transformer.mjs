@@ -21,6 +21,7 @@ app.post("/:inputformat/to/:outputformat", async (request, reply) => {
     reply.send(transformers[outputformat].encode(transformers[inputformat].parse(request.body)));
 });
 
+console.log("atlaskit-transformer listening at http://" + hostname + ":" + port);
 app.listen({ port: port, hostname: hostname }, (err, address) => {
     if (err) {
         app.log.error(err);

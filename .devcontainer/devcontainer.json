@@ -41,10 +41,9 @@
 		}
 	},
 	"updateContentCommand": [
-		"git",
-		"submodule",
-		"update",
-		"--init"
+		"bash",
+		"-c",
+		"git submodule update --init; poetry install; npm install"
 	],
 	"forwardPorts": [
 		8000,
