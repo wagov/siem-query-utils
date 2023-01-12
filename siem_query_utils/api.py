@@ -80,10 +80,11 @@ def datalake_json(path: str, content=None, modified_key: Optional[str] = None) -
     path = settings("datalake_path") / clean_path(path)
     if content is None:
         return json.loads(path.read_text())
-    elif modified_key and modified_key in content and path.exists():
+    elif path.exists():
+        existing_content = json.loads(path.read_text())
         # Contrast the actual blob content for its modified time
         source_mtime, dest_mtime = isoparse(content[modified_key]), isoparse(
-            json.load(path.open())[modified_key]
+            existing_content[modified_key]
         )
         if source_mtime >= dest_mtime:
             return content
@@ -890,8 +891,8 @@ def ingest_datalake_hot():
             futures.append(executor.submit(adx_query, query))
         while True:
             seconds = time.time() - start
+            running = [f.running() for f in futures].count(True)
             if int(seconds) % 30 == 0:
-                running = [f.running() for f in futures].count(True)
                 done = [f.done() for f in futures].count(True)
                 logger.debug(
                     f"{running} running, {done} done, {len(futures)} total, time: {seconds:.1f}s"
