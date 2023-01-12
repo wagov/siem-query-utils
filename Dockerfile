@@ -13,10 +13,13 @@ RUN curl -sL https://quarto.org/download/latest/quarto-linux-amd64.deb -o /tmp/q
  && apt-get clean -y && rm -rf /var/lib/apt/lists/* /tmp/quarto.deb
 
 # Copy over python project
-USER jovyan
 COPY . /app
 WORKDIR /app
+RUN chown -R jovyan:jovyan /app
+
+USER jovyan
 SHELL ["/bin/bash", "-l", "-c"]
 # Install python project, azure cli extensions and npm subproject
-RUN pip install poetry && poetry install && az extension add -n log-analytics -y
+RUN pip install poetry && poetry install
+RUN az extension add -n log-analytics -y
 RUN npm install

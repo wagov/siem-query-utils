@@ -414,8 +414,14 @@ def adx_query(kql, attempt=0):
     try:
         return settings("dx_client").execute(settings("dx_db"), kql).primary_results[0]
     except (KustoServiceError, KustoThrottlingError) as error:
+        if "E_QUERY_RESULT_SET_TOO_LARGE" in str(error):
+            # if query result set is too large, try again with a smaller take
+            rows = int(20000 / (attempt + 1))
+            return adx_query(kql + f"\n | take {rows}", attempt + 1)
+        logger.debug(kql)
         if attempt >= 3:
-            logger.debug(f"ADX Kusto Error: {error}")
+            logger.warning(f"ADX Kusto Error: {error}")
             raise
         time.sleep(1 + attempt * 2)  # exponential backoff
+        logger.debug(f"ADX Kusto Error: {error}, retrying...")
         return adx_query(kql, attempt + 1)

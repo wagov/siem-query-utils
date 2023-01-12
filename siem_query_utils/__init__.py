@@ -49,7 +49,7 @@ if os.environ.get("SCHEDULE_JOBS", "false").lower() == "true":
     # register regular background tasks
     schedule.every(1).days.do(api.configure_datalake_hot)
     schedule.every(1).hours.do(api.list_workspaces)
-    schedule.every(10).seconds.do(api.ingest_datalake_hot)
+    schedule.every(1).minutes.do(api.ingest_datalake_hot)
 
 
 @app.get("/")
@@ -82,7 +82,7 @@ def serve():
         [
             "bash",
             "-c",
-            "while true; do curl -s -o /dev/null http://localhost:8000/run_pending; sleep 15; done",
+            "while true; do curl -s -o /dev/null http://localhost:8000/run_pending; sleep 60; done",
         ],
         close_fds=True,
     )
@@ -110,4 +110,11 @@ def cli():
     """
     Entry point for the CLI to launch uvicorn server or jupyterlab
     """
-    Fire({"listWorkspaces": api.list_workspaces, "serve": serve, "jupyterlab": jupyterlab})
+    Fire(
+        {
+            "listWorkspaces": api.list_workspaces,
+            "serve": serve,
+            "jupyterlab": jupyterlab,
+            "ingest": api.ingest_datalake_hot,
+        }
+    )

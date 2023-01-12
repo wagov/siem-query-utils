@@ -837,15 +837,36 @@ def upload_loganalytics(rows: list[dict], log_type: str, target_workspace: str =
     logger.info(f"Uploaded {len(allrows)} records to {log_type}_CL.")
 
 
-# Path relative to datalake_path (see azcli.py)
-dx_tmpl = "notebooks/wasoc-notebook/kql/dataexplorer"
+def get_dx_kql(name):
+    """
+    Returns the contents of a dxkql file in the dataexplorer folder.
+    """
+    local_path = Path(__file__).parent.parent / "wasoc-notebook/notebooks/kql/dataexplorer"
+    remote_path = settings("datalake_path") / "notebooks/wasoc-notebook/kql/dataexplorer"
+    if os.environ.get("LOG_LEVEL").lower() == "debug" and (local_path / name).exists():
+        logger.debug(f"Dev mode (LOG_LEVEL: DEBUG) - Using local {name}")
+        return (local_path / name).read_text()
+    else:
+        return (remote_path / name).read_text()
 
 
 def configure_datalake_hot():
     """
     Configures the hot data lake for ingestion. Should be scheduled to run once per day.
+
+    Note separately, cluster policy should be tweaked for ingestion performance as below:
+
+    .alter-merge cluster policy capacity ```{
+        "IngestionCapacity": {
+            "ClusterMaximumConcurrentOperations": 512,
+            "CoreUtilizationCoefficient": 16
+        },
+        "StreamingIngestionPostProcessingCapacity": {
+            "MaximumConcurrentOperationsPerNode": 40
+        }
+    }```
     """
-    ingest_func = Template((settings("datalake_path") / dx_tmpl / "ingest_func.kql").read_text())
+    ingest_func = Template(get_dx_kql("ingest_func.kql"))
     return dataframe_from_result_table(
         adx_query([ingest_func.substitute(**ws) for ws in workspace_details()])
     )
@@ -853,31 +874,32 @@ def configure_datalake_hot():
 
 def ingest_datalake_hot():
     """
-    Ingests the hot data lake into the data lake. Should be scheduled to run every 10 seconds.
+    Ingests the hot data lake into the data lake. Should be scheduled to run every 1 minute.
     """
-    ingest_tables = Template(
-        (settings("datalake_path") / dx_tmpl / "ingest_tables.kql").read_text()
-    )
-    with ThreadPoolExecutor(max_workers=12) as executor:
-        # 6 workers optimal for a Standard_L8as_v3 instance
-        # 12 workers optimal for a Standard_L16as_v3 instance
+    ingest_tables = Template(get_dx_kql("ingest_tables.kql"))
+    with ThreadPoolExecutor(max_workers=32) as executor:
         ingest_queries = []
         for ws in workspace_details():
             ingest_queries += ingest_tables.substitute(**ws).strip().split("\n\n")
         shuffle(ingest_queries)
-        logger.debug(
-            f"ingesting {len(workspace_details())} workspaces using {len(ingest_queries)} queries"
-        )
+        # open("current-ingest.kql", "w").write("\n".join(ingest_queries))
+        logger.debug(f"Running ingestion using {len(ingest_queries)} queries")
         futures = []
+        start = time.time()
         for query in ingest_queries:
             futures.append(executor.submit(adx_query, query))
         while True:
-            running = [f.running() for f in futures].count(True)
-            done = [f.done() for f in futures].count(True)
-            logger.debug(f"{running} running, {done} done, {len(futures)} total")
+            seconds = time.time() - start
+            if int(seconds) % 30 == 0:
+                running = [f.running() for f in futures].count(True)
+                done = [f.done() for f in futures].count(True)
+                logger.debug(
+                    f"{running} running, {done} done, {len(futures)} total, time: {seconds:.1f}s"
+                )
             if running == 0:
+                logger.debug(f"Ingest done in {seconds:.1f}s")
                 break
-            time.sleep(30)
+            time.sleep(1)
 
-    ingest_stats = (settings("datalake_path") / dx_tmpl / "ingest_stats.kql").read_text()
-    logger.debug(dataframe_from_result_table(adx_query(ingest_stats)))
+    # ingest_stats = get_dx_kql("ingest_stats.kql")
+    # logger.debug(dataframe_from_result_table(adx_query(ingest_stats)))
