@@ -87,6 +87,9 @@ def serve():
         close_fds=True,
     )
     host, port, log_level = "0.0.0.0", 8000, os.environ.get("LOG_LEVEL", "WARNING").lower()
+    # kill placeholder server before starting uvicorn
+    if os.environ.get("KILL_PLACEHOLDER", "false").lower() == "true":
+        run(f"pkill -f http.server", shell=True)
     uvicorn.run(f"{__package__}:app", port=port, host=host, log_level=log_level, proxy_headers=True)
     background_atlaskit.kill()
     background_jobs.kill()

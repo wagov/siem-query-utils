@@ -38,4 +38,7 @@ RUN npm install -g npm && npm install
 
 EXPOSE 8000 2222
 
-ENTRYPOINT ["/bin/bash", "-l", "-c", "service ssh start; siem_query_utils serve"]
+ENV KILL_PLACEHOLDER true
+
+# Start SSH, serve a placeholder server and start the siem_query_utils server
+ENTRYPOINT ["/bin/bash", "-l", "-c", "service ssh start; python -m http.server & siem_query_utils serve"]
