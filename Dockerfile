@@ -7,6 +7,10 @@ LABEL org.opencontainers.image.source="https://github.com/wagov/siem-query-utils
 # User setup and group fix
 USER root
 RUN groupmod -n jovyan users
+RUN apt-get update && apt-get install -y --no-install-recommends dialog openssh-server \
+    && echo "root:Docker!" | chpasswd
+COPY sshd_config /etc/ssh/
+
 # Debian pkgs setup
 RUN curl -sL https://quarto.org/download/latest/quarto-linux-amd64.deb -o /tmp/quarto.deb \
  && apt-get -y update && apt-get -y --no-install-recommends install weasyprint wkhtmltopdf byobu /tmp/quarto.deb \
@@ -19,7 +23,5 @@ RUN chown -R jovyan:jovyan /app
 
 USER jovyan
 SHELL ["/bin/bash", "-l", "-c"]
-# Install python project, azure cli extensions and npm subproject
-RUN pip install poetry && poetry install
-RUN az extension add -n log-analytics -y
-RUN npm install
+# Install poetry
+RUN pip install poetry

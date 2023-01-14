@@ -1,0 +1,39 @@
+FROM  --platform=linux/amd64 jupyter/datascience-notebook:python-3.10
+LABEL org.opencontainers.image.authors="cybersecurity@dpc.wa.gov.au"
+LABEL org.opencontainers.image.source="https://github.com/wagov/siem-query-utils"
+
+USER root
+RUN cp -r /home/jovyan /root
+
+# Debian pkgs setup
+RUN curl -sL https://quarto.org/download/latest/quarto-linux-amd64.deb -o /tmp/quarto.deb \
+ && apt-get -y update && apt-get -y --no-install-recommends install weasyprint wkhtmltopdf dialog openssh-server /tmp/quarto.deb \
+ && apt-get -y full-upgrade && apt-get clean -y && rm -rf /var/lib/apt/lists/* /tmp/quarto.deb \
+
+# Configure SSH for [Azure App Service](https://learn.microsoft.com/en-us/azure/app-service/configure-custom-container?tabs=debian&pivots=container-linux#enable-ssh)
+RUN echo "root:Docker!" | chpasswd \
+ && echo <<< EOL\
+ Port                   2222\n\
+ ListenAddress          0.0.0.0\n\
+ LoginGraceTime         180\n\
+ X11Forwarding          yes\n\
+ Ciphers                aes128-cbc,3des-cbc,aes256-cbc,aes128-ctr,aes192-ctr,aes256-ctr\n\
+ MACs                   hmac-sha1,hmac-sha1-96\n\
+ StrictModes            yes\n\
+ SyslogFacility         DAEMON\n\
+ PasswordAuthentication yes\n\
+ PermitEmptyPasswords   no\n\
+ PermitRootLogin        yes\n\
+ EOL > /etc/ssh/sshd_config; 
+
+# Copy over python project
+COPY . /app
+WORKDIR /app
+
+SHELL ["/bin/bash", "-l", "-c"]
+# Install python project, azure cli extensions and npm subproject
+RUN pip install poetry && poetry install
+RUN az extension add -n log-analytics -y
+RUN npm install
+
+ENTRYPOINT ["/bin/bash", "-l", "-c", "service ssh start; siem_query_utils serve"]

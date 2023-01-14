@@ -2,7 +2,6 @@
 	"name": "Jupyter",
 	"build": {
 		"dockerfile": "../Dockerfile",
-		"cacheFrom": " ghcr.io/wagov/siem-query-utils:main"
 	},
 	"hostRequirements": {
 		"cpus": 4
@@ -43,7 +42,7 @@
 	"updateContentCommand": [
 		"bash",
 		"-c",
-		"git submodule update --init; poetry install; npm install"
+		"git submodule update --init; poetry install; az extension add -n log-analytics -y; npm install"
 	],
 	"forwardPorts": [
 		8000,
