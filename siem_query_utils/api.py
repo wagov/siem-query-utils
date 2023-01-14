@@ -881,14 +881,20 @@ def ingest_datalake_hot():
     with ThreadPoolExecutor(max_workers=32) as executor:
         ingest_queries = []
         for ws in workspace_details():
-            ingest_queries += ingest_tables.substitute(**ws).strip().split("\n\n")
+            wsqueries = ingest_tables.substitute(**ws).strip().split("\n\n")
+            shuffle(wsqueries)
+            ingest_queries.append(wsqueries)
         shuffle(ingest_queries)
-        # open("current-ingest.kql", "w").write("\n".join(ingest_queries))
-        logger.debug(f"Running ingestion using {len(ingest_queries)} queries")
+        logger.debug(
+            f"Running ingestion for {len(ingest_queries)} workspaces,"
+            f" {len(ingest_queries[0])} tables each at {datetime.now().isoformat()}"
+        )
         futures = []
         start = time.time()
         for query in ingest_queries:
             futures.append(executor.submit(adx_query, query))
+            time.sleep(3)
+        seconds = 0
         while True:
             seconds = time.time() - start
             running = [f.running() for f in futures].count(True)
@@ -898,9 +904,23 @@ def ingest_datalake_hot():
                     f"{running} running, {done} done, {len(futures)} total, time: {seconds:.1f}s"
                 )
             if running == 0:
-                logger.debug(f"Ingest done in {seconds:.1f}s")
                 break
             time.sleep(1)
-
-    # ingest_stats = get_dx_kql("ingest_stats.kql")
-    # logger.debug(dataframe_from_result_table(adx_query(ingest_stats)))
+        results = []
+        for future in futures:
+            if future.exception():
+                logger.error(future.exception())
+            else:
+                results.append(dataframe_from_result_table(future.result()))
+        df = pandas.concat(results)
+        logger.debug(
+            "Ingestion errors:\n"
+            + df[df["Result"] != "Completed"][["CommandText", "Reason"]].to_string()
+        )
+        hotcache = adx_query("find where isnotempty(source_ingestion_time) | count")[0]["Count"]
+        logger.info(f"Ingest done in {seconds:.1f}s. Hot cache: {hotcache} records")
+    ingest_stats = get_dx_kql("ingest_stats.kql")
+    logger.debug(
+        "Ingestion delay > 3 hrs:\n"
+        + dataframe_from_result_table(adx_query(ingest_stats)).to_string()
+    )
