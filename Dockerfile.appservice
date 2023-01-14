@@ -36,6 +36,9 @@ RUN pip install poetry && poetry install
 RUN az extension add -n log-analytics -y
 RUN npm install -g npm && npm install
 
+# Fix for odd high uids from npm
+RUN chown -R root:root .
+
 EXPOSE 8000 2222
 
 ENV KILL_PLACEHOLDER true
