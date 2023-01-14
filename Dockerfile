@@ -7,9 +7,6 @@ LABEL org.opencontainers.image.source="https://github.com/wagov/siem-query-utils
 # User setup and group fix
 USER root
 RUN groupmod -n jovyan users
-RUN apt-get update && apt-get install -y --no-install-recommends dialog openssh-server \
-    && echo "root:Docker!" | chpasswd
-COPY sshd_config /etc/ssh/
 
 # Debian pkgs setup
 RUN curl -sL https://quarto.org/download/latest/quarto-linux-amd64.deb -o /tmp/quarto.deb \
@@ -25,3 +22,5 @@ USER jovyan
 SHELL ["/bin/bash", "-l", "-c"]
 # Install poetry
 RUN pip install poetry
+# Freshen npm
+RUN npm install -g npm
