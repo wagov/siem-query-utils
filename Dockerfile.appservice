@@ -32,12 +32,10 @@ WORKDIR /app
 
 SHELL ["/bin/bash", "-l", "-c"]
 # Install python project, azure cli extensions and npm subproject
-RUN pip install poetry && poetry install
+RUN pip install --quiet --no-cache-dir .
 RUN az extension add -n log-analytics -y
-RUN npm install -g npm && npm install
-
-# Fix for odd high uids from npm
-RUN chown -R root:root .
+# chown is to fix odd high uids from npm install
+RUN npm --quiet clean-install . && chown -R root:root ./node_modules
 
 EXPOSE 8000 2222
 
