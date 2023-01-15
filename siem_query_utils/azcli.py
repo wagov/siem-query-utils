@@ -49,6 +49,7 @@ cache = Cache(maxsize=25600, ttl=300)
 app_state = {
     "logged_in": False,
     "login_time": datetime.utcnow() - timedelta(days=1),
+    "msi_failed": os.environ.get("DISABLE_MSI", "false").lower() == "true",
 }  # last login 1 day ago to force relogin
 
 
@@ -242,7 +243,7 @@ def login(refresh: bool = False):
         refresh (bool, optional): force relogin. Defaults to False.
     """
     cli = get_default_cli()
-    if os.environ.get("IDENTITY_HEADER"):
+    if os.environ.get("IDENTITY_HEADER") and not app_state.get("msi_failed"):
         if refresh:
             cli.invoke(
                 ["logout", "--only-show-errors", "-o", "json"], out_file=open(os.devnull, "w")
@@ -255,10 +256,12 @@ def login(refresh: bool = False):
         if cli.result.error:
             # bail as we aren't able to login
             logger.error(cli.result.error)
-            exit(loginstatus)
-        app_state["logged_in"] = True
-        app_state["login_time"] = datetime.utcnow()
-    else:  # attempt interactive login
+            app_state["msi_failed"] = True
+        else:
+            app_state.pop("msi_failed", None)
+            app_state["logged_in"] = True
+            app_state["login_time"] = datetime.utcnow()
+    if not os.environ.get("IDENTITY_HEADER") or app_state.get("msi_failed"):
         while not app_state["logged_in"]:
             cli.invoke(["account", "show", "-o", "json"], out_file=open(os.devnull, "w"))
             if cli.result.result and "environmentName" in cli.result.result:
