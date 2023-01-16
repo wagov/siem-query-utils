@@ -103,14 +103,14 @@ files = [
 
 [[package]]
 name = "argcomplete"
-version = "1.12.3"
+version = "2.0.0"
 description = "Bash tab completion for argparse"
 category = "main"
 optional = false
-python-versions = "*"
+python-versions = ">=3.6"
 files = [
-    {file = "argcomplete-1.12.3-py2.py3-none-any.whl", hash = "sha256:291f0beca7fd49ce285d2f10e4c1c77e9460cf823eef2de54df0c0fec88b0d81"},
-    {file = "argcomplete-1.12.3.tar.gz", hash = "sha256:2c7dbffd8c045ea534921e63b0be6fe65e88599990d8dc408ac8c542b72a5445"},
+    {file = "argcomplete-2.0.0-py2.py3-none-any.whl", hash = "sha256:cffa11ea77999bb0dd27bb25ff6dc142a6796142f68d45b1a26b11f58724561e"},
+    {file = "argcomplete-2.0.0.tar.gz", hash = "sha256:6372ad78c89d662035101418ae253668445b391755cfe94ea52f1b9d22425b20"},
 ]
 
 [package.extras]
@@ -247,52 +247,51 @@ async = ["aiodns (>=2.0)", "aiohttp (>=3.0)"]
 
 [[package]]
 name = "azure-batch"
-version = "12.0.0"
+version = "13.0.0"
 description = "Microsoft Azure Batch Client Library for Python"
 category = "main"
 optional = false
-python-versions = "*"
+python-versions = ">=3.6"
 files = [
-    {file = "azure-batch-12.0.0.zip", hash = "sha256:1a9b1e178984a7bf495af67bcce51f0db1e4a8a957afb29e33554a14a9674deb"},
-    {file = "azure_batch-12.0.0-py2.py3-none-any.whl", hash = "sha256:10470ab3aa43ec416569b68c1167fe7bea1ea53b54c7fea8842c51ec8a68fd76"},
+    {file = "azure-batch-13.0.0.zip", hash = "sha256:e9295de70404d276eda0dd2253d76397439abe5d8f18c1fca199c49b8d6ae30a"},
+    {file = "azure_batch-13.0.0-py3-none-any.whl", hash = "sha256:6d2647f579c7de50a20fa8cd9121aca5ab9b102340dd9a900d212f1f377ef2d4"},
 ]
 
 [package.dependencies]
 azure-common = ">=1.1,<2.0"
-msrest = ">=0.6.21"
 msrestazure = ">=0.4.32,<2.0.0"
 
 [[package]]
 name = "azure-cli"
-version = "2.43.0"
+version = "2.44.1"
 description = "Microsoft Azure Command-Line Tools"
 category = "main"
 optional = false
 python-versions = ">=3.7.0"
 files = [
-    {file = "azure-cli-2.43.0.tar.gz", hash = "sha256:50fb7c464fc870b64467472a5c05f309e28a7d2017317971321898d6143e2ef7"},
-    {file = "azure_cli-2.43.0-py3-none-any.whl", hash = "sha256:b4e118dda267ffd672dd99ac06651d8b8a1b9c54edaa5f82b029818375ed8dff"},
+    {file = "azure-cli-2.44.1.tar.gz", hash = "sha256:39f81b0da7a93114be0db2a49efb4058de77ad78fb2aeb7a23874535e694e2ec"},
+    {file = "azure_cli-2.44.1-py3-none-any.whl", hash = "sha256:1a9c80922ebff5c8f58ea431d80bbb063410001723208f0c34e4e6564c97cefd"},
 ]
 
 [package.dependencies]
 antlr4-python3-runtime = ">=4.9.3,<4.10.0"
 azure-appconfiguration = ">=1.1.1,<1.2.0"
-azure-batch = ">=12.0.0,<12.1.0"
-azure-cli-core = "2.43.0"
+azure-batch = ">=13.0.0,<13.1.0"
+azure-cli-core = "2.44.1"
 azure-cosmos = ">=3.0.2,<4.0"
 azure-data-tables = "12.4.0"
 azure-datalake-store = ">=0.0.49,<0.1.0"
 azure-graphrbac = ">=0.60.0,<0.61.0"
 azure-keyvault = ">=1.1.0,<1.2.0"
 azure-keyvault-administration = "4.0.0b3"
-azure-keyvault-keys = "4.5.1"
+azure-keyvault-keys = "4.8.0b2"
 azure-loganalytics = ">=0.1.0,<0.2.0"
 azure-mgmt-advisor = "9.0.0"
 azure-mgmt-apimanagement = ">=3.0.0,<3.1.0"
 azure-mgmt-appconfiguration = "2.2.0"
 azure-mgmt-applicationinsights = ">=1.0.0,<1.1.0"
 azure-mgmt-authorization = ">=0.61.0,<0.62.0"
-azure-mgmt-batch = ">=16.2.0,<16.3.0"
+azure-mgmt-batch = ">=17.0.0,<17.1.0"
 azure-mgmt-batchai = "7.0.0b1"
 azure-mgmt-billing = "6.0.0"
 azure-mgmt-botservice = ">=2.0.0b3,<2.1.0"
@@ -302,7 +301,7 @@ azure-mgmt-compute = ">=29.0.0,<29.1.0"
 azure-mgmt-consumption = ">=2.0,<3.0"
 azure-mgmt-containerinstance = ">=9.1.0,<9.2.0"
 azure-mgmt-containerregistry = "10.0.0"
-azure-mgmt-containerservice = ">=20.6.0,<20.7.0"
+azure-mgmt-containerservice = ">=21.1.0,<21.2.0"
 azure-mgmt-cosmosdb = "8.0.0"
 azure-mgmt-databoxedge = ">=1.0.0,<1.1.0"
 azure-mgmt-datalake-analytics = ">=0.2.1,<0.3.0"
@@ -337,23 +336,23 @@ azure-mgmt-rdbms = ">=10.2.0b5,<10.3.0"
 azure-mgmt-recoveryservices = ">=2.1.0,<2.2.0"
 azure-mgmt-recoveryservicesbackup = ">=5.1.0b1,<5.2.0"
 azure-mgmt-redhatopenshift = "1.1.0"
-azure-mgmt-redis = ">=13.1.0,<13.2.0"
+azure-mgmt-redis = ">=14.1.0,<14.2.0"
 azure-mgmt-relay = ">=0.1.0,<0.2.0"
 azure-mgmt-resource = "21.1.0b1"
 azure-mgmt-search = ">=8.0,<9.0"
-azure-mgmt-security = "2.0.0b1"
+azure-mgmt-security = "3.0.0"
 azure-mgmt-servicebus = ">=8.1.0,<8.2.0"
 azure-mgmt-servicefabric = ">=1.0.0,<1.1.0"
 azure-mgmt-servicefabricmanagedclusters = ">=1.0.0,<1.1.0"
-azure-mgmt-servicelinker = "1.0.0"
+azure-mgmt-servicelinker = "1.2.0b1"
 azure-mgmt-signalr = "1.1.0"
-azure-mgmt-sql = "4.0.0b5"
+azure-mgmt-sql = "4.0.0b6"
 azure-mgmt-sqlvirtualmachine = "1.0.0b4"
 azure-mgmt-storage = ">=21.0.0,<21.1.0"
 azure-mgmt-synapse = "2.1.0b5"
 azure-mgmt-trafficmanager = ">=1.0.0,<1.1.0"
 azure-mgmt-web = "7.0.0"
-azure-multiapi-storage = ">=0.10.0,<0.11.0"
+azure-multiapi-storage = ">=1.0.0,<1.1.0"
 azure-storage-common = ">=1.4,<2.0"
 azure-synapse-accesscontrol = ">=0.5.0,<0.6.0"
 azure-synapse-artifacts = ">=0.14.0,<0.15.0"
@@ -379,18 +378,18 @@ xmltodict = ">=0.12,<1.0"
 
 [[package]]
 name = "azure-cli-core"
-version = "2.43.0"
+version = "2.44.1"
 description = "Microsoft Azure Command-Line Tools Core Module"
 category = "main"
 optional = false
 python-versions = ">=3.7.0"
 files = [
-    {file = "azure-cli-core-2.43.0.tar.gz", hash = "sha256:3ec1546afc0651bf51667d2173e1f4cb91350a054cd677bf8964d4a47b04e88f"},
-    {file = "azure_cli_core-2.43.0-py3-none-any.whl", hash = "sha256:e2047f9499e5adef2ee550aa48aa9b15e892ce8a2aef1924040caa9dbd420423"},
+    {file = "azure-cli-core-2.44.1.tar.gz", hash = "sha256:693cc0ff2f2e7857fc5048a5d1782074919d80b5efeb53812def50586aa52810"},
+    {file = "azure_cli_core-2.44.1-py3-none-any.whl", hash = "sha256:17c336699ff918353691fec341b958c2ff2d49cafe5f26420809a151eeef4784"},
 ]
 
 [package.dependencies]
-argcomplete = ">=1.8,<2.0"
+argcomplete = ">=2.0,<3.0"
 azure-cli-telemetry = ">=1.0.0,<1.1.0"
 azure-mgmt-core = ">=1.2.0,<2"
 cryptography = "*"
@@ -580,22 +579,22 @@ msrest = ">=0.6.21"
 
 [[package]]
 name = "azure-keyvault-keys"
-version = "4.5.1"
+version = "4.8.0b2"
 description = "Microsoft Azure Key Vault Keys Client Library for Python"
 category = "main"
 optional = false
-python-versions = ">=3.6"
+python-versions = ">=3.7"
 files = [
-    {file = "azure-keyvault-keys-4.5.1.zip", hash = "sha256:da88e71fec92a14fb58cec8868abf7eba040188dcdce369ce1050add196586f6"},
-    {file = "azure_keyvault_keys-4.5.1-py3-none-any.whl", hash = "sha256:337010172984ce969e3e448599a99eb5b2eecc7746534dd29345d28dd7c71d95"},
+    {file = "azure-keyvault-keys-4.8.0b2.zip", hash = "sha256:554c10240c2964843c7f30548d45f4ba2db26959032bba747f09a7cf7ef75db6"},
+    {file = "azure_keyvault_keys-4.8.0b2-py3-none-any.whl", hash = "sha256:434e48c6f662b0099bde099c4a4bc1f4487bf6006db3b9d0da21688e26d2ec92"},
 ]
 
 [package.dependencies]
 azure-common = ">=1.1,<2.0"
-azure-core = ">=1.20.0,<2.0.0"
+azure-core = ">=1.24.0,<2.0.0"
 cryptography = ">=2.1.4"
-msrest = ">=0.6.21"
-six = ">=1.12.0"
+isodate = ">=0.6.1"
+typing-extensions = ">=4.0.1"
 
 [[package]]
 name = "azure-kusto-data"
@@ -724,20 +723,20 @@ msrestazure = ">=0.4.32,<2.0.0"
 
 [[package]]
 name = "azure-mgmt-batch"
-version = "16.2.0"
+version = "17.0.0"
 description = "Microsoft Azure Batch Management Client Library for Python"
 category = "main"
 optional = false
-python-versions = ">=3.6"
+python-versions = ">=3.7"
 files = [
-    {file = "azure-mgmt-batch-16.2.0.zip", hash = "sha256:69691066cd5a2c86e8fdaaefbb80e2940381acedfc8053df193b5214d2ece682"},
-    {file = "azure_mgmt_batch-16.2.0-py3-none-any.whl", hash = "sha256:b1307cbb79d23fbd53ea80b45cf4ff7653ed31a0e725f294c1202f304506ad1c"},
+    {file = "azure-mgmt-batch-17.0.0.zip", hash = "sha256:8643385952eec318f8aa05ec63c61aef3bbbfefdfb80a74fd176dfd84aabb16a"},
+    {file = "azure_mgmt_batch-17.0.0-py3-none-any.whl", hash = "sha256:45480e4dbad82b27780c85643b73da5f0b84c8e12369c66f19a4536f296d9bd2"},
 ]
 
 [package.dependencies]
 azure-common = ">=1.1,<2.0"
-azure-mgmt-core = ">=1.3.0,<2.0.0"
-msrest = ">=0.6.21"
+azure-mgmt-core = ">=1.3.2,<2.0.0"
+msrest = ">=0.7.1"
 
 [[package]]
 name = "azure-mgmt-batchai"
@@ -894,14 +893,14 @@ msrest = ">=0.6.21"
 
 [[package]]
 name = "azure-mgmt-containerservice"
-version = "20.6.0"
+version = "21.1.0"
 description = "Microsoft Azure Container Service Management Client Library for Python"
 category = "main"
 optional = false
 python-versions = ">=3.7"
 files = [
-    {file = "azure-mgmt-containerservice-20.6.0.zip", hash = "sha256:cd0dcb838e6b3b5be0b6c8d09e890d1635adeaa9eb350d829c49462740e4b1ec"},
-    {file = "azure_mgmt_containerservice-20.6.0-py3-none-any.whl", hash = "sha256:2a79364f47dd12b6ee475f48943785cb776e8686b02b8b632a1ecdae15e17a67"},
+    {file = "azure-mgmt-containerservice-21.1.0.zip", hash = "sha256:e443b2b615ceeeca4bcf396a0d6af071d924240307f56f0e06ff7aad8696c406"},
+    {file = "azure_mgmt_containerservice-21.1.0-py3-none-any.whl", hash = "sha256:97763b0035b8a2ee04a6027c437d424012b60cf77857531274ac13549f9fd82d"},
 ]
 
 [package.dependencies]
@@ -1536,20 +1535,20 @@ msrest = ">=0.6.21"
 
 [[package]]
 name = "azure-mgmt-redis"
-version = "13.1.0"
+version = "14.1.0"
 description = "Microsoft Azure Redis Cache Management Client Library for Python"
 category = "main"
 optional = false
-python-versions = "*"
+python-versions = ">=3.7"
 files = [
-    {file = "azure-mgmt-redis-13.1.0.zip", hash = "sha256:ece913e5fc7f157e945809e557443f79ff7691cabca4bbc5ecb266352f843179"},
-    {file = "azure_mgmt_redis-13.1.0-py2.py3-none-any.whl", hash = "sha256:b7bc04d0f1d846e4bbf5f93101fdccd5d39cc400b5994da06546bda10ebb2e52"},
+    {file = "azure-mgmt-redis-14.1.0.zip", hash = "sha256:2cef7659cdbe56fb042a23a35521d7c36a370faf4d4252f9f26f98a9697afa28"},
+    {file = "azure_mgmt_redis-14.1.0-py3-none-any.whl", hash = "sha256:48e2c056c36d291361da4955a69f6fedcc94d346ff2c99aca0705fd883e91073"},
 ]
 
 [package.dependencies]
 azure-common = ">=1.1,<2.0"
-azure-mgmt-core = ">=1.3.0,<2.0.0"
-msrest = ">=0.6.21"
+azure-mgmt-core = ">=1.3.2,<2.0.0"
+msrest = ">=0.7.1"
 
 [[package]]
 name = "azure-mgmt-relay"
@@ -1604,20 +1603,20 @@ msrest = ">=0.5.0"
 
 [[package]]
 name = "azure-mgmt-security"
-version = "2.0.0b1"
+version = "3.0.0"
 description = "Microsoft Azure Security Center Management Client Library for Python"
 category = "main"
 optional = false
-python-versions = "*"
+python-versions = ">=3.7"
 files = [
-    {file = "azure-mgmt-security-2.0.0b1.zip", hash = "sha256:f0ab1ad3cc3c11e644297224d80438cc70a67ef4c3c3357f93d23aec256eb084"},
-    {file = "azure_mgmt_security-2.0.0b1-py2.py3-none-any.whl", hash = "sha256:1fb56f6c75a0c2c15c2aa365161129d5280cedbdd38ed560b772a99b4dbb24a3"},
+    {file = "azure-mgmt-security-3.0.0.zip", hash = "sha256:bcba7cef857f6b02a2d98afeb07f9871b1628fa33d8861ab1387e732e7db3f84"},
+    {file = "azure_mgmt_security-3.0.0-py3-none-any.whl", hash = "sha256:3b14a236383effdc5e3135b394b7883a183fcc9cdde01b735b2aae227b42e2e9"},
 ]
 
 [package.dependencies]
 azure-common = ">=1.1,<2.0"
-azure-mgmt-core = ">=1.2.0,<2.0.0"
-msrest = ">=0.6.21"
+azure-mgmt-core = ">=1.3.2,<2.0.0"
+msrest = ">=0.7.1"
 
 [[package]]
 name = "azure-mgmt-servicebus"
@@ -1672,20 +1671,20 @@ msrest = ">=0.6.21"
 
 [[package]]
 name = "azure-mgmt-servicelinker"
-version = "1.0.0"
+version = "1.2.0b1"
 description = "Microsoft Azure Service Linker Management Client Library for Python"
 category = "main"
 optional = false
-python-versions = ">=3.6"
+python-versions = ">=3.7"
 files = [
-    {file = "azure-mgmt-servicelinker-1.0.0.zip", hash = "sha256:9408e0c046b64c90c4514f29c1fc2453c1320356e12e4700bfef88e961dbed7b"},
-    {file = "azure_mgmt_servicelinker-1.0.0-py3-none-any.whl", hash = "sha256:3f4a957e795c116c1ed6deda1b16d56529f18111462102164818b3eb06b12582"},
+    {file = "azure-mgmt-servicelinker-1.2.0b1.zip", hash = "sha256:44ad50e75434c001b9e682ab166bfae7fd8050a97e811769dbbb7f11cb8c38d9"},
+    {file = "azure_mgmt_servicelinker-1.2.0b1-py3-none-any.whl", hash = "sha256:adf6e3632703784ea4486f7e18fd86dbd1d27b2ebdfbff7c3f29a2128d3c8ca2"},
 ]
 
 [package.dependencies]
 azure-common = ">=1.1,<2.0"
-azure-mgmt-core = ">=1.3.0,<2.0.0"
-msrest = ">=0.6.21"
+azure-mgmt-core = ">=1.3.2,<2.0.0"
+msrest = ">=0.7.1"
 
 [[package]]
 name = "azure-mgmt-signalr"
@@ -1706,14 +1705,14 @@ msrest = ">=0.6.21"
 
 [[package]]
 name = "azure-mgmt-sql"
-version = "4.0.0b5"
+version = "4.0.0b6"
 description = "Microsoft Azure SQL Management Client Library for Python"
 category = "main"
 optional = false
 python-versions = ">=3.7"
 files = [
-    {file = "azure-mgmt-sql-4.0.0b5.zip", hash = "sha256:2f7d6206c1109d5b87a7f328ab50edf2923ae6ac0513e0d594aded4f1ab497ca"},
-    {file = "azure_mgmt_sql-4.0.0b5-py3-none-any.whl", hash = "sha256:7e01e466b796f29ed1736a1e86b99c08191ea90d9f410f597dfd89b706fbbaaf"},
+    {file = "azure-mgmt-sql-4.0.0b6.zip", hash = "sha256:d7fd1518c5bdc99b22949d32363845cd53bb59b265078c899832ff471a502ca7"},
+    {file = "azure_mgmt_sql-4.0.0b6-py3-none-any.whl", hash = "sha256:f0896699d19301be23eceb277f603d082d671403fb0727c8d20eaa3a7d4ce44d"},
 ]
 
 [package.dependencies]
@@ -1808,14 +1807,14 @@ msrest = ">=0.6.21"
 
 [[package]]
 name = "azure-multiapi-storage"
-version = "0.10.0"
+version = "1.0.0"
 description = "Microsoft Azure Storage Client Library for Python with multi API version support."
 category = "main"
 optional = false
 python-versions = "*"
 files = [
-    {file = "azure-multiapi-storage-0.10.0.tar.gz", hash = "sha256:4210b6b3fa279e56c55713262ba48983685ab71a78593ad85ad315d295ed019f"},
-    {file = "azure_multiapi_storage-0.10.0-py2.py3-none-any.whl", hash = "sha256:2867845b47bc9fff383e8b5c9fcc7860d680bece65329f4af39b31581a7b4cfc"},
+    {file = "azure-multiapi-storage-1.0.0.tar.gz", hash = "sha256:c79bf77b7fe9a129be24cb7449623595c33a60051c3fea364a7f1396e5cec888"},
+    {file = "azure_multiapi_storage-1.0.0-py2.py3-none-any.whl", hash = "sha256:7234f0fcd681e49c297c4ab3ec99de0c74e88270074f21a81949d88b4f7195cc"},
 ]
 
 [package.dependencies]
@@ -6853,4 +6852,4 @@ test = ["pytest"]
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "24e900124e44e47588846e875a288c6d976d424ddc04e52f977956a31bb13420"
+content-hash = "a7f4c3b2c51ee1f067d1a1837daf322ef4afd1d136247a0e2948123219834edb"
