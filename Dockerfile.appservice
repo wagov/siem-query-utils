@@ -30,6 +30,8 @@ RUN echo 'root:Docker!' | chpasswd \
 COPY . /app
 WORKDIR /app
 
+# Setup conda env and activate
+RUN /opt/conda/bin/conda init
 SHELL ["/bin/bash", "-l", "-c"]
 # Install python project, azure cli extensions and npm subproject
 RUN pip install --quiet --no-cache-dir .
