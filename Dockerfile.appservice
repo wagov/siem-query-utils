@@ -10,34 +10,15 @@ RUN curl -sL https://quarto.org/download/latest/quarto-linux-amd64.deb -o /tmp/q
  && apt-get -y update && apt-get -y --no-install-recommends install weasyprint wkhtmltopdf dialog openssh-server /tmp/quarto.deb \
  && apt-get -y full-upgrade && apt-get clean -y && rm -rf /var/lib/apt/lists/* /tmp/quarto.deb
 
-# Configure SSH for [Azure App Service](https://learn.microsoft.com/en-us/azure/app-service/configure-custom-container?tabs=debian&pivots=container-linux#enable-ssh)
-# Also setup bash to try and import session env when logging in via ssh
-RUN echo 'root:Docker!' | chpasswd \
- && echo $'\
- Port                   2222\n\
- ListenAddress          0.0.0.0\n\
- LoginGraceTime         180\n\
- X11Forwarding          yes\n\
- Ciphers                aes128-cbc,3des-cbc,aes256-cbc,aes128-ctr,aes192-ctr,aes256-ctr\n\
- MACs                   hmac-sha1,hmac-sha1-96\n\
- StrictModes            yes\n\
- SyslogFacility         DAEMON\n\
- PasswordAuthentication yes\n\
- PermitEmptyPasswords   no\n\
- PermitRootLogin        yes\n\
- ' > /etc/ssh/sshd_config \
- && echo $'\
- if [[ -n $SSH_CONNECTION ]] ; then\n\
-    # Import our environment variables from docker launch\n\
-    for e in $(tr "\000" "\n" < /proc/1/environ); do\n\
-        eval "export $e"\n\
-    done\n\
-fi\n\
-' >> /root/.bashrc
-
 # Copy over python project
 COPY . /app
 WORKDIR /app
+
+# Configure SSH for [Azure App Service](https://learn.microsoft.com/en-us/azure/app-service/configure-custom-container?tabs=debian&pivots=container-linux#enable-ssh)
+# Also setup bash to try and import session env when logging in via ssh
+RUN echo 'root:Docker!' | chpasswd
+RUN cat appservice/sshd_config > /etc/sshd_config
+RUN cat /home/jovyan/.bashrc appservice/.bashrc > /root/.bashrc
 
 # Setup conda env and activate
 SHELL ["/bin/bash", "-l", "-c"]
