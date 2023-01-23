@@ -8,7 +8,7 @@ line-length = 120
 
 [tool.poetry]
 name = "siem-query-utils"
-version = "2.0.1"
+version = "2.1.0"
 description = ""
 authors = ["Adon Metcalfe <adonm@fastmail.fm>"]
 readme = "README.md"
