@@ -86,8 +86,9 @@ def datalake_json(path: str, content=None, modified_key: Optional[str] = None) -
         source_mtime, dest_mtime = isoparse(content[modified_key]), isoparse(
             existing_content[modified_key]
         )
-        if source_mtime >= dest_mtime:
-            return content
+        if source_mtime <= dest_mtime:
+            # if the source is older than the destination, return the destination without uploading
+            return existing_content
     logger.debug(f"Uploading {path}.")
     path.write_text(json.dumps(content, sort_keys=True, indent=2))
     return content
@@ -273,7 +274,7 @@ def upload_results(results, blobdest, filenamekeys):
                 modified_key="TimeGenerated",
             )
         )
-    # wait(futures)
+    wait(futures)
     logger.debug(f"Uploaded {len(results)} results.")
 
 
