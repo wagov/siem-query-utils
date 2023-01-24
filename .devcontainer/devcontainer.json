@@ -1,7 +1,7 @@
 {
 	"name": "Jupyter",
 	"build": {
-		"dockerfile": "../Dockerfile",
+		"dockerfile": "../Dockerfile"
 	},
 	"hostRequirements": {
 		"cpus": 4
@@ -34,7 +34,6 @@
 			"extensions": [
 				"ms-python.python",
 				"ms-python.vscode-pylance",
-				"ms-toolsai.jupyter",
 				"GitHub.copilot"
 			]
 		}

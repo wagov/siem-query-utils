@@ -48,6 +48,9 @@ jupyterlab = "^3.5.2"
 polars = "^0.15.16"
 pyarrow = "^10.0.1"
 jiraone = "^0.7.3"
+dagster = "^1.1.13"
+dagit = "^1.1.13"
+jupytext = "^1.14.4"
 
 [tool.poetry.scripts]
 siem_query_utils = "siem_query_utils:cli"
