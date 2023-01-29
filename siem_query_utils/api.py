@@ -12,6 +12,7 @@ import re
 import shlex
 import tempfile
 import time
+import logging
 import zipfile
 from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import datetime
@@ -21,6 +22,7 @@ from pathlib import Path
 from random import shuffle
 from string import Template
 from typing import Optional
+from prefect import task
 
 import httpx_cache
 import pandas
@@ -33,10 +35,12 @@ from fastapi import APIRouter, Body, HTTPException, Request, Response
 from fastapi.responses import PlainTextResponse, StreamingResponse
 from requests.exceptions import ReadTimeout
 
-from .azcli import adx_query, azcli, cache, clean_path, logger, settings, submit
+from .azcli import adx_query, azcli, cache, clean_path, settings, submit
 from .proxy import httpx_client
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
 
 
 class OutputFormat(str, Enum):
@@ -158,8 +162,6 @@ def analytics_query(
     return results
 
 
-@router.get("/listWorkspaces")
-@cache.memoize(ttl=60 * 60 * 3)  # 3 hr cache
 def list_workspaces(fmt: OutputFormat = OutputFormat.LIST, agency="ALL"):
     "Get sentinel workspaces from {datalake}/notebooks/lists/SentinelWorkspaces.csv"
     # return workspaces dataframe from the datalake

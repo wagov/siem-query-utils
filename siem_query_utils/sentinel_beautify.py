@@ -1,14 +1,14 @@
 """
 Beautify Sentinel query results
 """
-import json
+import json, logging
 
 from fastapi import APIRouter
 from flatten_json import flatten
 from markdown import markdown
 
 from .api import OutputFormat, atlaskit_client, datalake_json, list_workspaces
-from .azcli import logger, settings
+from .azcli import settings
 
 router = APIRouter()
 
@@ -107,17 +107,16 @@ def sentinel_beautify(
         def __missing__(self, key):
             return key
 
-
-    for alert in data["AlertData"][:10]: # Assumes alertdata is newest to oldest
+    for alert in data["AlertData"][:10]:  # Assumes alertdata is newest to oldest
         if not alert_details:
-                alert_details += [
-                    "",
-                    "## Alert Details",
-                    (
-                        "The last day of activity (up to 10 alerts) is summarised below from"
-                        " newest to oldest."
-                    ),
-                ]
+            alert_details += [
+                "",
+                "## Alert Details",
+                (
+                    "The last day of activity (up to 10 alerts) is summarised below from"
+                    " newest to oldest."
+                ),
+            ]
         alert_details.append(
             f"### [{alert['AlertName']} (Severity:{alert['AlertSeverity']}) - "
             + f"TimeGenerated {alert['TimeGenerated']}]({alert['AlertLink']})"
@@ -128,7 +127,6 @@ def sentinel_beautify(
             "ExtendedProperties",
             "Entities",
         ]:  # entities last as may get truncated
-
             if alert.get(key):
                 if isinstance(alert[key], str) and alert[key][0] in ["{", "["]:
                     alert[key] = json.loads(alert[key])
@@ -142,16 +140,10 @@ def sentinel_beautify(
                                     entity["Type"], ""
                                 ).format_map(Default(entity)),
                             }
-                        if not observable[
-                            "value"
-                        ]:  # dump whole dict as string if no mapping found
+                        if not observable["value"]:  # dump whole dict as string if no mapping found
                             observable["value"] = repr(entity)
                         observables.append(observable)
-                if (
-                    alert[key]
-                    and isinstance(alert[key], list)
-                    and isinstance(alert[key][0], dict)
-                ):
+                if alert[key] and isinstance(alert[key], list) and isinstance(alert[key][0], dict):
                     # if list of dicts, make a table
                     for index, entry in enumerate(
                         [flatten(item) for item in alert[key] if len(item.keys()) > 1]
@@ -166,17 +158,9 @@ def sentinel_beautify(
                         if value and len(value) < 200:
                             alert_details.append(f"- **{entrykey}:** {value}")
                         elif value:  # break out long blocks
-                            alert_details += [
-                                f"- **{entrykey}:**",
-                                "",
-                                "```",
-                                value,
-                                "```",
-                                "",
-                            ]
+                            alert_details += [f"- **{entrykey}:**", "", "```", value, "```", ""]
                 else:  # otherwise just add as separate lines
                     alert_details += ["", f"#### {key}"] + [item for item in alert[key]]
-
 
     title = (
         f"SIEM Detection #{data['IncidentNumber']} Sev:{data['Severity']} -"

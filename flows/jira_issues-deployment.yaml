@@ -1,0 +1,45 @@
+###
+### A complete description of a Prefect Deployment for flow 'jira-issues'
+###
+name: jira_issues
+description: null
+version: b800d06922f9e0d9d429018a9d78cf14
+# The work queue that will handle this deployment's runs
+work_queue_name: default
+work_pool_name: null
+tags: []
+parameters: {}
+schedule: null
+is_schedule_active: null
+infra_overrides: {}
+infrastructure:
+  type: process
+  env: {}
+  labels: {}
+  name: null
+  command: null
+  stream_output: true
+  working_dir: null
+  block_type_slug: process
+  _block_type_slug: process
+
+###
+### DO NOT EDIT BELOW THIS LINE
+###
+flow_name: jira-issues
+manifest_path: null
+storage: null
+path: /Users/adonm/GitHub/siem-query-utils/flows
+entrypoint: jira_issues.py:jira_issues
+parameter_openapi_schema:
+  title: Parameters
+  type: object
+  properties:
+    fromtime:
+      title: fromtime
+      position: 0
+      type: string
+  required:
+  - fromtime
+  definitions: null
+timestamp: '2023-01-29T13:28:17.304974+00:00'

@@ -21,30 +21,12 @@ from azure.cli.core import get_default_cli
 from azure.storage.blob import BlobServiceClient
 from cacheout import Cache
 from cloudpathlib import AzureBlobClient
-from dotenv import load_dotenv
-from fastapi import HTTPException
 from pathvalidate import sanitize_filepath
 from uvicorn.config import Config
 from azure.kusto.data import KustoClient, KustoConnectionStringBuilder
 from azure.kusto.data.exceptions import KustoServiceError, KustoThrottlingError
 
-
-# load env vars from .env files
-for f in Path(".env").absolute().parents:
-    dotenv = f / ".env"
-    if dotenv.exists():
-        load_dotenv(dotenv_path=dotenv)
-        print(f"Loaded environment variables from {dotenv}.")
-        break
-
-
-# Steal uvicorns logger config
-logger = logging.getLogger("uvicorn.error")
-Config(f"{__package__}:app").configure_logging()
-logger.setLevel(os.environ.get("LOG_LEVEL", "INFO"))
-
 cache = Cache(maxsize=25600, ttl=300)
-
 
 app_state = {
     "logged_in": False,
@@ -93,7 +75,7 @@ def boot(secret: str) -> str:
         secret (str): keyvault secret URL
 
     Raises:
-        HTTPException: 403 if secret is not found
+        Exception: if secret is not found
 
     Returns:
         str: session data as a base64 encoded string
@@ -101,8 +83,7 @@ def boot(secret: str) -> str:
     # cache session creds for an hour
     secret = azcli(["keyvault", "secret", "show", "--id", secret])
     if not secret or "error" in secret:
-        logger.warning(secret["error"])
-        raise HTTPException(403, "KEYVAULT_SESSION_SECRET not available")
+        raise Exception("KEYVAULT_SESSION_SECRET not available")
     return secret["value"]
 
 
@@ -128,8 +109,7 @@ def load_session(data: str = None, config: dict = json.loads(default_session)):
     try:
         config.update(json.loads(base64.b64decode(data)))
     except Exception as exc:
-        logger.warning(exc)
-        raise HTTPException(500, "Failed to load session data") from exc
+        raise Exception("Failed to load session data") from exc
     session = {"session": config, "base64": encode_session(config), "apis": {}}
     session["key"] = hashlib.sha256(session["base64"]).hexdigest()
     for item, data in config.items():
@@ -255,7 +235,7 @@ def login(refresh: bool = False):
         )
         if cli.result.error:
             # bail as we aren't able to login
-            logger.error(cli.result.error)
+            logging.warning(f"az login issue: {cli.result.error}")
             app_state["msi_failed"] = True
         else:
             app_state.pop("msi_failed", None)
@@ -274,6 +254,7 @@ def login(refresh: bool = False):
                 )
     # setup all other env vars
     bootstrap(app_state)
+    logging.info("bootstrapped app state")
 
 
 def settings(key: str):
@@ -316,17 +297,16 @@ def azcli(basecmd: list, attempt: int = 0, max_attempts: int = 5):
     cli = get_default_cli()
     for arg in cmd:
         assert isinstance(arg, str)
-    logger.debug(" ".join(["az"] + cmd).replace("\n", " ").strip()[:160])
     try:
         cli.invoke(cmd, out_file=open(os.devnull, "w"))
     except (SystemExit, Exception) as exc:  # pylint: disable=broad-except
         if attempt >= max_attempts:
             raise Exception(f"Exceeded {max_attempts} CLI invocations") from exc
-        logger.warning(f"CLI invocation failed: attempt {attempt}, retrying... ({exc})")
+        logging.warning(f"CLI invocation failed: attempt {attempt}, retrying... ({exc})")
         time.sleep(1 + attempt * 2)  # exponential backoff
         return azcli(basecmd, attempt + 1, max_attempts)
     if cli.result.error:
-        logger.warning(cli.result.error)
+        logging.warning(f"CLI invocation failed: {cli.result.error}")
     return cli.result.result
 
 
@@ -376,7 +356,6 @@ def generatesas(
             expiry,
         ]
     )
-    logger.debug(result)
     return result
 
 

@@ -133,3 +133,6 @@ dmypy.json
 
 .python_packages
 node_modules
+
+#DAGSTER_HOME
+.dagster
