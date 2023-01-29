@@ -960,8 +960,7 @@ def export_jira_issues():
             start_at, total_rows, issues = getissues(start_at, jql)
             dataframes.append(pandas.DataFrame(issues))
             if start_at == 100:
-                logger.info(f"{total_rows} to load", end=":")
-            logger.debug(f"{start_at}", end=".")
+                logger.info(f"{total_rows} to load")
         if total_rows > 1:
             df = pandas.concat(dataframes)
             df["fields"] = df["fields"].apply(json.dumps)
