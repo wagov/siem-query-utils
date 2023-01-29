@@ -45,11 +45,24 @@ app.add_middleware(
 # Configures default executor including number of threads when running uvicorn
 app.on_event("startup")(configure_loop)
 
+
+def generate_reports():
+    """
+    Generate reports for all workspaces
+    """
+    api.collect_report_json(agency="ALL", max_age=7200)
+    api.papermill_report(agency="ALL", max_age=7200)
+
+
 if os.environ.get("SCHEDULE_JOBS", "false").lower() == "true":
+    print("Job scheduling enabled!!!")
     # register regular background tasks
     schedule.every(1).days.do(api.configure_datalake_hot)
+    schedule.every(1).days.at("12:00").do(generate_reports)
     schedule.every(1).hours.do(api.list_workspaces)
+    schedule.every(30).minutes.do(api.export_jira_issues)
     schedule.every(1).minutes.do(api.ingest_datalake_hot)
+    schedule.every(1).minutes.do(api.update_jira_issues)
 
 
 @app.get("/")

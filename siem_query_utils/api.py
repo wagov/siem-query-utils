@@ -925,3 +925,192 @@ def ingest_datalake_hot():
         "Ingestion delay > 3 hrs:\n"
         + dataframe_from_result_table(adx_query(ingest_stats)).to_string()
     )
+
+
+def export_jira_issues():
+    client = httpx_api("jira-3")
+
+    def getissues(start_at, jql):
+        response = client.get(
+            "search", params={"jql": jql, "fields": "*all", "startAt": start_at, "maxResults": 100}
+        ).json()
+        next_start = response["startAt"] + response["maxResults"]
+        total_rows = response["total"]
+        if next_start > total_rows:
+            next_start = total_rows
+        issues = response["issues"]
+        return next_start, total_rows, issues
+
+    def save_date_issues(
+        after_date: pandas.Timestamp, path=settings("datalake_path") / "jira_outputs" / "issues"
+    ):
+        fromdate = after_date
+        todate = after_date + pandas.to_timedelta("1d")
+        jql = (
+            f"updated >= {fromdate.date().isoformat()} and updated <"
+            f" {todate.date().isoformat()} order by key"
+        )
+        output = path / f"{fromdate.date().isoformat()}" / "issues.parquet"
+        if output.exists() and fromdate < pandas.Timestamp.now() - pandas.to_timedelta("2d"):
+            # skip previously dumped days except for last 2 days
+            return None
+        start_at, total_rows = 0, -1
+        dataframes = []
+        while start_at != total_rows:
+            start_at, total_rows, issues = getissues(start_at, jql)
+            dataframes.append(pandas.DataFrame(issues))
+            if start_at == 100:
+                logger.info(f"{total_rows} to load", end=":")
+            logger.debug(f"{start_at}", end=".")
+        if total_rows > 1:
+            df = pandas.concat(dataframes)
+            df["fields"] = df["fields"].apply(json.dumps)
+            logger.info(f"saving {output}")
+            try:
+                df.to_parquet(output.open("wb"))
+            except Exception as exc:
+                print(exc)
+            return df
+        else:
+            return None
+
+    after = pandas.Timestamp.now() - pandas.to_timedelta("7d")
+    until = pandas.Timestamp.now() + pandas.to_timedelta("1d")
+
+    while after < until:
+        save_date_issues(after)
+        after += pandas.to_timedelta("1d")
+
+
+def update_jira_issues():
+    from siem_query_utils.sentinel_beautify import sentinel_beautify_local
+    from time import sleep
+    from json import JSONDecodeError
+
+    client = httpx_api("jira-3")
+
+    def adxtable2df(table):
+        columns = [col.column_name for col in table.columns]
+        frame = pandas.DataFrame(table.raw_rows, columns=columns)
+        return frame
+
+    # +
+    def jiradata(siemref):
+        response = client.get(
+            "search",
+            params={
+                "jql": f'"SIEM Reference[Short text]" ~ "{siemref}"',
+                "fields": "summary,status,customfield_10061,customfield_10063,customfield_10064,customfield_10065,customfield_10039,customfield_10010,requestType,updated",
+            },
+        )
+        try:
+            issues = response.json().get("issues")
+        except JSONDecodeError:
+            logger.warning(response.headers)
+            return None
+        if issues:
+            return issues.pop()
+        else:
+            return None
+
+    def checkrow(row):
+        if not row["jira"]:
+            return "create"
+        fields = row["jira"]["fields"]
+        labels = dict(l.split(":") for l in fields["customfield_10065"] if len(l.split(":")) == 2)
+        current = (
+            row["Title"] == fields["customfield_10063"]
+            and row["Severity"] == labels["SIEM_Severity"]
+            and row["Status"] == labels["SIEM_Status"]
+            and pandas.to_datetime(fields["updated"]) > pandas.to_datetime(row["TimeGenerated"])
+        )
+        if current:
+            return "current"
+        else:
+            return "update"
+
+    # +
+    def incidents(after="ago(1h)", rows=1000):
+        df = adxtable2df(
+            adx_query(
+                f"""SecurityIncident
+        | summarize arg_max(TimeGenerated, *) by IncidentNumber, TenantId
+        | where TimeGenerated >= {after}
+        | order by TimeGenerated asc
+        | take {rows}"""
+            )
+        )
+        if df.shape[0] == 0:  # after is too new, go back to 1hr ago
+            sleep(10)
+            return incidents(rows=rows)
+        df["siemref"] = df["TenantId"] + "_" + df["IncidentNumber"].astype(str)
+        dfs = [df[i : i + 64] for i in range(0, df.shape[0], 64)]
+        for df in dfs:
+            with ThreadPoolExecutor(max_workers=8) as executor:
+                df["jira"] = list(executor.map(jiradata, df["siemref"]))
+            sleep(0.5)
+        df = pandas.concat(dfs)
+        df["sync_action"] = df.apply(checkrow, axis=1)
+        return df
+
+    def alerts(alertids, tenantid):
+        query = f"""SecurityAlert
+        | summarize arg_max(TimeGenerated, *) by SystemAlertId, TenantId
+        | where SystemAlertId in ('{"', '".join(alertids)}') and TenantId == '{tenantid}'
+        | order by TimeGenerated desc
+        """
+        return adxtable2df(adx_query(query)).to_dict(orient="records")
+
+    # -
+
+    def update_jira(df):
+        logger.info(f"Latest incident seen: {df.TimeGenerated.max()}")
+        df = df[df["sync_action"] != "current"].astype({"IncidentNumber": "string"})
+        logger.info(df.groupby("sync_action").size())
+        issue_url = str(client.base_url).replace("api/3", "api/2/issue")
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            df["AlertData"] = list(executor.map(alerts, df["AlertIds"], df["TenantId"]))
+        for index, row in df.iterrows():
+            sb_data = sentinel_beautify_local(row.to_dict())
+            jira_dict = {
+                "fields": {
+                    "customfield_10002": [int(sb_data["jira_orgid"])],
+                    "customfield_10061": row["siemref"],
+                    "customfield_10063": sb_data["sentinel_data"]["Title"],
+                    "customfield_10064": sb_data["sentinel_data"]["IncidentUrl"],
+                    "customfield_10065": sb_data["labels"],
+                    "customfield_10071": sb_data["secops_status"],
+                    "customfield_10039": None,
+                    "description": sb_data["wikimarkup"].decode("utf8"),
+                    "issuetype": {"id": 10001},
+                    "customfield_10010": "soc/6066f033-446e-4113-a76f-b5e2d77ff296",
+                    "project": {"key": "SOC"},
+                    "summary": sb_data["subject"][:254],
+                }
+            }
+            if row["sync_action"] == "create":
+                response = client.post(issue_url, json=jira_dict)
+            elif row["sync_action"] == "update":
+                jira_dict["fields"].pop("customfield_10010")  # don't set requestType on update
+                response = client.put(issue_url + "/" + row["jira"]["key"], json=jira_dict)
+            else:
+                logger.warning(row["sync_action"])
+            if response.status_code > 299:
+                logger.info(response)
+            else:
+                logger.debug(response.text)
+        upload_results(
+            df.to_dict(orient="records"), "sentinel_outputs/incidents", "TenantId,IncidentNumber"
+        )
+        return df
+
+    # + tags=[]
+    after = "ago(1d)"
+    while True:
+        df = incidents(after=after)
+        updates = update_jira(df)
+        if updates.shape[0] > 0:  # keep going until we get no updates
+            after = f"todatetime('{updates.TimeGenerated.max()}')"
+            sleep(30)
+        else:
+            break
