@@ -95,7 +95,7 @@ def serve():
         [
             "bash",
             "-c",
-            "while true; do curl -s -o /dev/null http://localhost:8000/run_pending; sleep 60; done",
+            "while true; do sleep 15; curl -s -o /dev/null http://localhost:8000/run_pending; done",
         ],
         close_fds=True,
     )
