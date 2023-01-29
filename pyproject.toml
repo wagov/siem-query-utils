@@ -48,6 +48,7 @@ jupyterlab = "^3.5.3"
 pyarrow = "^10.0.1"
 jupytext = "^1.14.4"
 pip = "^22.3.1"
+prefect = "^2.7.10"
 
 [tool.poetry.scripts]
 siem_query_utils = "siem_query_utils:cli"
