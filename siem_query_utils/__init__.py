@@ -6,8 +6,10 @@ import os
 from inspect import cleandoc
 from secrets import token_urlsafe
 from subprocess import Popen, run
+import logging
 
-import schedule
+from apscheduler.schedulers.background import BackgroundScheduler
+
 import uvicorn
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
@@ -15,7 +17,10 @@ from fire import Fire
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import api, proxy, sentinel_beautify
-from .azcli import configure_loop
+from .azcli import configure_loop, logger
+
+logging.getLogger("apscheduler").setLevel(logging.INFO)
+
 
 app = FastAPI(
     title="SIEM Query Utils API v2",
@@ -54,17 +59,6 @@ def generate_reports():
     api.papermill_report(agency="ALL", max_age=7200)
 
 
-if os.environ.get("SCHEDULE_JOBS", "false").lower() == "true":
-    print("Job scheduling enabled!!!")
-    # register regular background tasks
-    schedule.every(1).days.do(api.configure_datalake_hot)
-    schedule.every(1).days.at("12:00").do(generate_reports)
-    schedule.every(1).hours.do(api.list_workspaces)
-    schedule.every(30).minutes.do(api.export_jira_issues)
-    schedule.every(1).minutes.do(api.update_jira_issues)
-    schedule.every(1).minutes.do(api.ingest_datalake_hot)
-
-
 @app.get("/")
 def index():
     """
@@ -73,15 +67,17 @@ def index():
     return RedirectResponse("/docs")
 
 
-@app.get("/run_pending")
-def run_pending():
-    schedule.run_pending()
-    return {"jobs": [str(job) for job in schedule.get_jobs()]}
-
-
-@app.get("/jobs")
-def jobs():
-    return {"jobs": [str(job) for job in schedule.get_jobs()]}
+def schedule_jobs():
+    logger.debug("Job scheduling enabled!!!")
+    scheduler = BackgroundScheduler({"apscheduler.timezone": "Australia/Perth"})
+    # Add schedules, configure tasks here
+    scheduler.add_job(api.update_jira_issues, "cron", second="*/20", max_instances=1)
+    scheduler.add_job(api.ingest_datalake_hot, "cron", second="*/30", max_instances=1)
+    scheduler.add_job(api.export_jira_issues, "cron", minute="*/15", max_instances=1)
+    scheduler.add_job(api.list_workspaces, "cron", minute="10")
+    scheduler.add_job(generate_reports, "cron", hour="18", max_instances=1)
+    scheduler.add_job(api.configure_datalake_hot, "cron", hour="22")
+    scheduler.start()
 
 
 def serve():
@@ -91,21 +87,21 @@ def serve():
     its recommended to run this behind a reverse proxy like nginx or traefik.
     """
     background_atlaskit = Popen(["bash", "-l", "-c", "node ."], close_fds=True)
-    background_jobs = Popen(
-        [
-            "bash",
-            "-c",
-            "while true; do sleep 15; curl -s -o /dev/null http://localhost:8000/run_pending; done",
-        ],
-        close_fds=True,
-    )
+    if os.environ.get("SCHEDULE_JOBS", "false").lower() == "true":
+        schedule_jobs()
     host, port, log_level = "0.0.0.0", 8000, os.environ.get("LOG_LEVEL", "WARNING").lower()
     # kill placeholder server before starting uvicorn
     if os.environ.get("KILL_PLACEHOLDER", "false").lower() == "true":
         run(f"pkill -f http.server", shell=True)
-    uvicorn.run(f"{__package__}:app", port=port, host=host, log_level=log_level, proxy_headers=True)
+    uvicorn.run(
+        f"{__package__}:app",
+        port=port,
+        host=host,
+        log_level=log_level,
+        proxy_headers=True,
+        log_config=None,
+    )
     background_atlaskit.kill()
-    background_jobs.kill()
 
 
 def jupyterlab(path: str = "."):

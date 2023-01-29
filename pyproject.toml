@@ -43,12 +43,12 @@ fastapi = "^0.89.1"
 itsdangerous = "^2.1.2"
 weasyprint = "^57.2"
 sigma-cli = "^0.5.3"
-schedule = "^1.1.0"
 jupyterlab = "^3.5.3"
 pyarrow = "^10.0.1"
 jupytext = "^1.14.4"
 pip = "^22.3.1"
 prefect = "^2.7.10"
+apscheduler = "^3.9.1.post1"
 
 [tool.poetry.scripts]
 siem_query_utils = "siem_query_utils:cli"
