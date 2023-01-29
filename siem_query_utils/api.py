@@ -951,8 +951,8 @@ def export_jira_issues():
             f" {todate.date().isoformat()} order by key"
         )
         output = path / f"{fromdate.date().isoformat()}" / "issues.parquet"
-        if output.exists() and fromdate < pandas.Timestamp.now() - pandas.to_timedelta("2d"):
-            # skip previously dumped days except for last 2 days
+        if output.exists() and fromdate < pandas.Timestamp.now() - pandas.to_timedelta("1d"):
+            # skip previously dumped days except for last day
             return None
         start_at, total_rows = 0, -1
         dataframes = []
@@ -1006,7 +1006,7 @@ def update_jira_issues():
             issues = response.json().get("issues")
         except JSONDecodeError:
             logger.warning(response.headers)
-            return None
+            raise
         if issues:
             return issues.pop()
         else:
@@ -1110,6 +1110,6 @@ def update_jira_issues():
         updates = update_jira(df)
         if updates.shape[0] > 0:  # keep going until we get no updates
             after = f"todatetime('{updates.TimeGenerated.max()}')"
-            sleep(30)
+            sleep(3)
         else:
             break
