@@ -1043,11 +1043,11 @@ def update_jira_issues():
             sleep(10)
             return incidents(rows=rows)
         df["siemref"] = df["TenantId"] + "_" + df["IncidentNumber"].astype(str)
-        dfs = [df[i : i + 64] for i in range(0, df.shape[0], 64)]
-        for df in dfs:
-            with ThreadPoolExecutor(max_workers=8) as executor:
+        dfs = [df[i : i + 32] for i in range(0, df.shape[0], 32)]
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            for df in dfs:
                 df["jira"] = list(executor.map(jiradata, df["siemref"]))
-            sleep(0.5)
+                sleep(0.5)
         df = pandas.concat(dfs)
         df["sync_action"] = df.apply(checkrow, axis=1)
         return df
