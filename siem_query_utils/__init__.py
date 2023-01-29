@@ -61,8 +61,8 @@ if os.environ.get("SCHEDULE_JOBS", "false").lower() == "true":
     schedule.every(1).days.at("12:00").do(generate_reports)
     schedule.every(1).hours.do(api.list_workspaces)
     schedule.every(30).minutes.do(api.export_jira_issues)
-    schedule.every(1).minutes.do(api.ingest_datalake_hot)
     schedule.every(1).minutes.do(api.update_jira_issues)
+    schedule.every(1).minutes.do(api.ingest_datalake_hot)
 
 
 @app.get("/")
