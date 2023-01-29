@@ -71,10 +71,12 @@ def schedule_jobs():
     logger.debug("Job scheduling enabled!!!")
     scheduler = BackgroundScheduler({"apscheduler.timezone": "Australia/Perth"})
     # Add schedules, configure tasks here
-    scheduler.add_job(api.ingest_datalake_hot, "cron", second="*/15", max_instances=1)
-    scheduler.add_job(api.update_jira_issues, "cron", minute="*/3", max_instances=1)
-    scheduler.add_job(api.export_jira_issues, "cron", minute="*/20", max_instances=1)
+    scheduler.add_job(api.ingest_datalake_hot, "cron", second="0", max_instances=1)
+    scheduler.add_job(api.update_jira_issues, "cron", second="30", max_instances=1)
+    scheduler.add_job(api.export_jira_issues, "cron", minute="*/30", max_instances=1)
     scheduler.add_job(api.list_workspaces, "cron", minute="10")
+    # backfill nightly
+    scheduler.add_job(api.update_jira_issues, "cron", hour="16", args=["ago(2d)"], max_instances=1)
     scheduler.add_job(generate_reports, "cron", hour="18", max_instances=1)
     scheduler.add_job(api.configure_datalake_hot, "cron", hour="22")
     scheduler.start()
