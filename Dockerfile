@@ -24,3 +24,6 @@ SHELL ["/bin/bash", "-l", "-c"]
 RUN pip install poetry
 # Freshen npm
 RUN npm install -g npm
+
+# Sleep forever on launch to keep container running
+ENTRYPOINT ["/bin/bash", "-l", "-c", "sleep infinity"]
