@@ -888,7 +888,7 @@ def ingest_datalake_hot():
     Ingests the hot data lake into the data lake. Should be scheduled to run every 1 minute.
     """
     ingest_tables = Template(get_dx_kql("ingest_tables.kql"))
-    with ThreadPoolExecutor(max_workers=16) as executor:
+    with ThreadPoolExecutor(max_workers=6) as executor:
         ingest_queries = get_dx_kql("ingest_tables_global.kql").split("\n\n")
         for ws in workspace_details():
             ingest_queries += ingest_tables.substitute(**ws).strip().split("\n\n")
