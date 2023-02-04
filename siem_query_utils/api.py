@@ -871,8 +871,15 @@ def configure_datalake_hot():
     }```
     """
     ingest_func = Template(get_dx_kql("ingest_func.kql"))
+    clusters = []
+    for workspace in workspace_details():
+        cluster = f"cluster('https://ade.loganalytics.io{workspace['id']}').database('{workspace['name']}').table(tbl)"
+        clusters.append(cluster)
+    clusters = ", ".join(clusters)
+    global_ingest = Template(get_dx_kql("ingest_func_global.kql")).substitute(clusters=clusters)
+    logger.debug(global_ingest)
     return dataframe_from_result_table(
-        adx_query([ingest_func.substitute(**ws) for ws in workspace_details()])
+        adx_query([global_ingest] + [ingest_func.substitute(**ws) for ws in workspace_details()])
     )
 
 
@@ -881,28 +888,24 @@ def ingest_datalake_hot():
     Ingests the hot data lake into the data lake. Should be scheduled to run every 1 minute.
     """
     ingest_tables = Template(get_dx_kql("ingest_tables.kql"))
-    with ThreadPoolExecutor(max_workers=32) as executor:
-        ingest_queries = []
+    with ThreadPoolExecutor(max_workers=16) as executor:
+        ingest_queries = get_dx_kql("ingest_tables_global.kql").split("\n\n")
         for ws in workspace_details():
-            wsqueries = ingest_tables.substitute(**ws).strip().split("\n\n")
-            shuffle(wsqueries)
-            ingest_queries.append(wsqueries)
+            ingest_queries += ingest_tables.substitute(**ws).strip().split("\n\n")
         shuffle(ingest_queries)
         logger.debug(
-            f"Running ingestion for {len(ingest_queries)} workspaces,"
-            f" {len(ingest_queries[0])} tables each at {datetime.now().isoformat()}"
+            f"Running {len(ingest_queries)} ingest queries at {datetime.now().isoformat()}"
         )
         futures = []
         start = time.time()
         for query in ingest_queries:
-            futures.append(executor.submit(adx_query, query))
-            time.sleep(3)
+            futures.append((query, executor.submit(adx_query, query)))
         seconds = 0
         while True:
             seconds = time.time() - start
-            running = [f.running() for f in futures].count(True)
+            running = [f.running() for q, f in futures].count(True)
             if int(seconds) % 30 == 0:
-                done = [f.done() for f in futures].count(True)
+                done = [f.done() for q, f in futures].count(True)
                 logger.debug(
                     f"{running} running, {done} done, {len(futures)} total, time: {seconds:.1f}s"
                 )
@@ -910,16 +913,13 @@ def ingest_datalake_hot():
                 break
             time.sleep(1)
         results = []
-        for future in futures:
+        for query, future in futures:
             if future.exception():
-                logger.error(future.exception())
+                logger.error(f"{query} failed with {future.exception()}"[:300])
             else:
                 results.append(dataframe_from_result_table(future.result()))
         df = pandas.concat(results)
-        logger.debug(
-            "Ingestion errors:\n"
-            + df[df["Result"] != "Completed"][["CommandText", "Reason"]].to_string()
-        )
+        logger.debug(df.sum(numeric_only=True).to_string())
         hotcache = adx_query("find where isnotempty(source_ingestion_time) | count")[0]["Count"]
         logger.info(f"Ingest done in {seconds:.1f}s. Hot cache: {hotcache} records")
     ingest_stats = get_dx_kql("ingest_stats.kql")
