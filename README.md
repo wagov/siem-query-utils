@@ -4,6 +4,12 @@ General utilities for querying SIEMs developed using [FastAPI](https://fastapi.t
 
 High cost functions are cached using [cacheout](https://github.com/dgilland/cacheout) which significantly improves performance by defaulting to caching all [azure cli](https://pypi.org/project/azure-cli/) calls in memory for 5 minutes.
 
+## Roadmap
+
+- Separate report logic entirely to [quarto](https://quarto.org) process
+- Review / replace job execution logic with [prefect](https://www.prefect.io) to reduce [complexity](https://www.prefect.io/guide/videos/eliminate-negative-engineering-with-prefect/)
+- Improve standalone running options and documention for running in a jupyterlab environment for secops and incident response
+
 ## Usage
 
 The [container image](https://github.com/wagov/siem-query-utils/pkgs/container/siem-query-utils) is intended to be hosted using a runtime such as [Azure App Service (Custom Container)](https://learn.microsoft.com/en-us/azure/app-service/tutorial-custom-container?pivots=container-linux). A [Managed Identity](https://docs.microsoft.com/en-us/azure/app-service/overview-managed-identity) is required to be configured to ensure the container can login to the [Azure CLI](https://docs.microsoft.com/en-us/cli/azure/authenticate-azure-cli#sign-in-with-a-managed-identity). [example_env](example_env) should be populated and used as a local `.env` file within this repository or configured on your container hosting environment.
