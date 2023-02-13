@@ -5807,14 +5807,14 @@ poetry-core = ">=1.3.0,<2.0.0"
 
 [[package]]
 name = "poetry-plugin-up"
-version = "0.2.1"
+version = "0.2.2"
 description = "Poetry plugin that updates dependencies and bumps their versions in pyproject.toml file"
 category = "dev"
 optional = false
 python-versions = ">=3.7,<4.0"
 files = [
-    {file = "poetry-plugin-up-0.2.1.tar.gz", hash = "sha256:46e2e94afecfc8c46c6f6abe956d0d55a4f14cac98b1ad22abdf43ebe1132630"},
-    {file = "poetry_plugin_up-0.2.1-py3-none-any.whl", hash = "sha256:93c4618e5221f727a6b1b390f104374e6268c14309652a991f65d2fa051e7aa5"},
+    {file = "poetry-plugin-up-0.2.2.tar.gz", hash = "sha256:5c80e59177038ae2facc52af09bd0a7f55e58cf255fb8d153eb36cf1242a619b"},
+    {file = "poetry_plugin_up-0.2.2-py3-none-any.whl", hash = "sha256:51268e1d42b0a8ce2b14e36e25af8be2f57c07df1c151babb10687801fc72936"},
 ]
 
 [package.dependencies]
@@ -8401,4 +8401,4 @@ test = ["pytest"]
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "a7d2c6002ada891fdbfce37cfea6b718061a8e49cdc8618c434fd33cf4456b49"
+content-hash = "4b82463b3a87d0a1efbfaa6b6ac463d43e4bc6205c8e6ed3ef9f2efc41dc24eb"
