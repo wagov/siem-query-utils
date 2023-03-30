@@ -200,18 +200,22 @@ def workspace_details():
     for wsdata in list_workspaces("json"):
         customerId = wsdata["customerId"]
         sub = wsdata["subscription"]
-        ws = azcli(
-            [
-                "monitor",
-                "log-analytics",
-                "workspace",
-                "list",
-                "--subscription",
-                sub,
-                "--query",
-                f"[?customerId == '{customerId}']",
-            ]
-        )[0]
+        try: # handle dead/missing subscriptions
+            ws = azcli(
+                [
+                    "monitor",
+                    "log-analytics",
+                    "workspace",
+                    "list",
+                    "--subscription",
+                    sub,
+                    "--query",
+                    f"[?customerId == '{customerId}']",
+                ]
+            )[0]
+        except Exception as exc:
+            logger.warning(exc)
+            continue
         ws["id"] = ws["id"].lower()
         ws["name"] = ws["name"].lower()
         ws["ingest_function"] = f"{ws['customerId'].replace('-', '_')}_incoming"
