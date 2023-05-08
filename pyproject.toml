@@ -30,7 +30,7 @@ python-dotenv = "^0.21.1"
 papermill = "^2.4.0"
 azure-cli = "^2.44.1"
 azure-kusto-data = {extras = ["pandas"], version = "^4.0.2"}
-ipython = "^8.9.0"
+ipython = "^8.13.2"
 python-dateutil = "^2.8.2"
 ipywidgets = "^8.0.4"
 seaborn = "^0.12.2"
