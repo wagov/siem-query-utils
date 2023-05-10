@@ -77,8 +77,8 @@ def schedule_jobs():
     scheduler.add_job(api.list_workspaces, "cron", minute="10")
     # backfill nightly
     scheduler.add_job(api.update_jira_issues, "cron", hour="16", args=["ago(2d)"], max_instances=1)
-    scheduler.add_job(generate_reports, "cron", hour="18", max_instances=1)
-    scheduler.add_job(api.configure_datalake_hot, "cron", hour="22")
+    # scheduler.add_job(generate_reports, "cron", hour="18", max_instances=1)
+    # scheduler.add_job(api.configure_datalake_hot, "cron", hour="22")
     scheduler.start()
 
 
