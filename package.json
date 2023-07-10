@@ -10,7 +10,7 @@
   "keywords": [],
   "author": "",
   "dependencies": {
-    "@atlaskit/editor-json-transformer": "^8.8.3",
+    "@atlaskit/editor-json-transformer": "^8.10.0",
     "@atlaskit/editor-markdown-transformer": "^5.0.0",
     "@atlaskit/editor-wikimarkup-transformer": "^11.1.13",
     "fastify": "^4.12.0"
