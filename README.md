@@ -46,6 +46,10 @@ If you are using github codespaces, quickstart below:
 poetry run siem_query_utils jupyterlab /workspace
 # API endpoints
 poetry run siem_query_utils serve
+# Debug shell
+poetry run ipython
+from siem_query_utils import api
+api.list_workspaces("ago(10d)")
 ```
 
 After running the above you can open [/api/v1/docs](http://localhost:8000/api/v1/docs) in your browser to get to the swagger debug ui which lets you test all the endpoints.
