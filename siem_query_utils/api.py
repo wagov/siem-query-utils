@@ -1081,6 +1081,13 @@ def update_jira_issues(start_after="ago(3h)"):
             df["AlertData"] = list(executor.map(alerts, df["AlertIds"], df["TenantId"]))
         for index, row in df.iterrows():
             sb_data = sentinel_beautify_local(row.to_dict())
+            try:
+                wikimarkup = sb_data["wikimarkup"].decode("utf8")
+            except:
+                try:
+                    wikimarkup = sb_data["wikimarkup"][:32700].decode("utf8")
+                except:
+                    wikimarkup = sb_data["wikimarkup"]
             jira_dict = {
                 "fields": {
                     "customfield_10002": [int(sb_data["jira_orgid"])],
@@ -1090,7 +1097,7 @@ def update_jira_issues(start_after="ago(3h)"):
                     "customfield_10065": sb_data["labels"],
                     "customfield_10071": sb_data["secops_status"],
                     "customfield_10039": None,
-                    "description": sb_data["wikimarkup"].decode("utf8"),
+                    "description": wikimarkup,
                     "issuetype": {"id": 10001},
                     "customfield_10010": "soc/6066f033-446e-4113-a76f-b5e2d77ff296",
                     "project": {"key": "SOC"},
